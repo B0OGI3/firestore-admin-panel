@@ -70,24 +70,35 @@ export default function CollectionViewer() {
 
   const handleEdit = (doc: FirestoreDoc) => {
     setEditingDoc(doc);
-    setEditFields(
-      Object.fromEntries(
-        Object.entries(doc).filter(([, v]) => typeof v === "string")
 
-      ) as Record<string, string>
-    );
+    const safeFields: Record<string, string> = {};
+    Object.entries(doc).forEach(([key, val]) => {
+      if (
+        typeof val === "string" ||
+        typeof val === "number" ||
+        typeof val === "boolean"
+      ) {
+        safeFields[key] = String(val);
+      }
+    });
+
+    setEditFields(safeFields);
     setModalOpened(true);
   };
-  
 
   const saveEdit = async () => {
     if (!editingDoc) return;
     try {
       const updated = { ...editFields };
-      delete updated.id;
+      delete updated.id; // Just in case
       await updateDoc(doc(db, collectionName, editingDoc.id), updated);
       showNotification({ title: "Saved", message: "Document updated", color: "green" });
-      window.location.reload();
+
+      // Live refresh without reload
+      setDocs((prev) =>
+        prev.map((d) => (d.id === editingDoc.id ? { ...d, ...updated } : d))
+      );
+      setModalOpened(false);
     } catch {
       showNotification({ title: "Error", message: "Failed to save", color: "red" });
     }
@@ -108,7 +119,9 @@ export default function CollectionViewer() {
     try {
       await addDoc(collection(db, collectionName), newDocFields);
       showNotification({ title: "Success", message: "Document added", color: "green" });
-      window.location.reload();
+      // Refresh docs
+      const snap = await getDocs(collection(db, collectionName));
+      setDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch {
       showNotification({ title: "Error", message: "Failed to add document", color: "red" });
     }
@@ -211,7 +224,7 @@ export default function CollectionViewer() {
       >
         <Stack>
           {editingDoc &&
-            allKeys.map((key, i) => (
+            Object.keys(editFields).map((key, i) => (
               <TextInput
                 key={`${editingDoc.id}-${key}`}
                 label={key}
