@@ -8,15 +8,30 @@ import {
   Flex,
   Group,
   Text,
+  Button,
 } from "@mantine/core";
-import { IconArrowLeft, IconMoon, IconSun } from "@tabler/icons-react";
+import {
+  IconArrowLeft,
+  IconMoon,
+  IconSun,
+  IconSettings,
+  IconLogout,
+} from "@tabler/icons-react";
 import { useThemeToggle } from "@/lib/theme";
+import PermissionGate from "@/lib/PermissionGate";
+import { signOut } from "firebase/auth";
+import { auth } from "@/lib/firebaseConfig";
 
 export default function HeaderBar() {
   const pathname = usePathname();
   const router = useRouter();
   const showBack = pathname?.startsWith("/dashboard/") && pathname !== "/dashboard";
   const { colorScheme, toggle } = useThemeToggle();
+
+  const handleLogout = async () => {
+    await signOut(auth);
+    router.replace("/login");
+  };
 
   return (
     <Box
@@ -42,14 +57,38 @@ export default function HeaderBar() {
               Firestore Admin Panel
             </Text>
           </Group>
-          <ActionIcon
-            onClick={toggle}
-            variant="subtle"
-            size="lg"
-            title={`Switch to ${colorScheme === "light" ? "dark" : "light"} mode`}
-          >
-            {colorScheme === "light" ? <IconMoon size={18} /> : <IconSun size={18} />}
-          </ActionIcon>
+
+          <Group gap="xs">
+            <PermissionGate permission="canManageRoles">
+              <Button
+                variant="light"
+                size="xs"
+                leftSection={<IconSettings size={16} />}
+                onClick={() => router.push("/dashboard/settings")}
+              >
+                Config
+              </Button>
+            </PermissionGate>
+
+            <ActionIcon
+              onClick={toggle}
+              variant="subtle"
+              size="lg"
+              title={`Switch to ${colorScheme === "light" ? "dark" : "light"} mode`}
+            >
+              {colorScheme === "light" ? <IconMoon size={18} /> : <IconSun size={18} />}
+            </ActionIcon>
+
+            <ActionIcon
+              onClick={handleLogout}
+              variant="subtle"
+              size="lg"
+              title="Sign out"
+              color="red"
+            >
+              <IconLogout size={18} />
+            </ActionIcon>
+          </Group>
         </Flex>
       </Container>
     </Box>

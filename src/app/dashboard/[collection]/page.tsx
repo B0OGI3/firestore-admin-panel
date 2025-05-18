@@ -2,6 +2,7 @@
 
 import {
   ActionIcon,
+  Badge,
   Box,
   Button,
   Card,
@@ -14,20 +15,25 @@ import {
   Text,
   TextInput,
   Title,
+  Center,
 } from "@mantine/core";
 import { IconEdit, IconTrash, IconPlus } from "@tabler/icons-react";
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useEffect, useState, type CSSProperties } from "react";
+import { useParams, useRouter } from "next/navigation";
 import {
   getDocs,
+  getDoc,
   collection,
   deleteDoc,
   doc,
   updateDoc,
   addDoc,
 } from "firebase/firestore";
-import { db } from "@/lib/firebaseConfig";
+import { auth, db } from "@/lib/firebaseConfig";
 import { showNotification } from "@mantine/notifications";
+import { onAuthStateChanged } from "firebase/auth";
+import PermissionGate from "@/lib/PermissionGate";
+import { useRolePermissions } from "@/lib/hooks/useRolePermissions";
 
 type FirestoreDoc = {
   id: string;
@@ -35,53 +41,95 @@ type FirestoreDoc = {
 };
 
 export default function CollectionViewer() {
+  const router = useRouter();
   const params = useParams();
   const collectionName = params.collection as string;
 
   const [docs, setDocs] = useState<FirestoreDoc[]>([]);
+  const [fields, setFields] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [editingDoc, setEditingDoc] = useState<FirestoreDoc | null>(null);
   const [editFields, setEditFields] = useState<Record<string, string>>({});
+  const [newDocFields, setNewDocFields] = useState<Record<string, string>>({});
   const [modalOpened, setModalOpened] = useState(false);
+  const [addModalOpened, setAddModalOpened] = useState(false);
+  const { permissions, loading } = useRolePermissions();
 
-  const newDocFields = {
-    name: "",
-    email: "",
+  const centerCellStyle: CSSProperties = {
+    textAlign: "center",
+    minWidth: 120,
+  };
+
+  const displayValue = (val: any): string => {
+    if (val === null || val === undefined) return "–";
+    if (typeof val === "string") return val.trim() || "–";
+    return String(val);
   };
 
   useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (!user) router.replace("/login");
+    });
+    return unsubscribe;
+  }, [router]);
+
+  useEffect(() => {
+    const fetchFields = async () => {
+      if (collectionName === "users") {
+        setFields(["name", "email", "role"]);
+        return;
+      }
+
+      try {
+        const snap = await getDoc(doc(db, "config/collections/items", collectionName));
+        if (snap.exists()) {
+          const data = snap.data();
+          const declaredFields = Array.isArray(data.fields) ? data.fields : [];
+          setFields(declaredFields);
+        }
+      } catch {
+        showNotification({ title: "Error", message: "Could not load fields", color: "red" });
+      }
+    };
+
+    fetchFields();
+  }, [collectionName]);
+
+  useEffect(() => {
     const fetchDocs = async () => {
-      const snap = await getDocs(collection(db, collectionName));
-      setDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      if (!collectionName) return;
+      try {
+        const snap = await getDocs(collection(db, collectionName));
+        setDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      } catch {
+        showNotification({ title: "Error", message: "Failed to fetch documents", color: "red" });
+      }
     };
     fetchDocs();
   }, [collectionName]);
 
-  const filtered = docs.filter((doc) =>
-    Object.values(doc)
-      .join(" ")
-      .toLowerCase()
-      .includes(search.toLowerCase())
-  );
+  useEffect(() => {
+    if (addModalOpened) {
+      const initial: Record<string, string> = {};
+      fields.forEach((key) => (initial[key] = ""));
+      setNewDocFields(initial);
+    }
+  }, [addModalOpened, fields]);
 
-  const allKeys = Array.from(
-    new Set(docs.flatMap((doc) => Object.keys(doc).filter((k) => k !== "id")))
+  const filtered = docs.filter((doc) =>
+    Object.values(doc).join(" ").toLowerCase().includes(search.toLowerCase())
   );
 
   const handleEdit = (doc: FirestoreDoc) => {
     setEditingDoc(doc);
-
     const safeFields: Record<string, string> = {};
-    Object.entries(doc).forEach(([key, val]) => {
-      if (
-        typeof val === "string" ||
-        typeof val === "number" ||
-        typeof val === "boolean"
-      ) {
-        safeFields[key] = String(val);
-      }
+    fields.forEach((key) => {
+      const val = doc[key];
+      safeFields[key] =
+        typeof val === "string" || typeof val === "number" || typeof val === "boolean"
+          ? String(val)
+          : "";
     });
-
     setEditFields(safeFields);
     setModalOpened(true);
   };
@@ -90,15 +138,12 @@ export default function CollectionViewer() {
     if (!editingDoc) return;
     try {
       const updated = { ...editFields };
-      delete updated.id; // Just in case
       await updateDoc(doc(db, collectionName, editingDoc.id), updated);
-      showNotification({ title: "Saved", message: "Document updated", color: "green" });
-
-      // Live refresh without reload
       setDocs((prev) =>
         prev.map((d) => (d.id === editingDoc.id ? { ...d, ...updated } : d))
       );
       setModalOpened(false);
+      showNotification({ title: "Saved", message: "Document updated", color: "green" });
     } catch {
       showNotification({ title: "Error", message: "Failed to save", color: "red" });
     }
@@ -118,14 +163,25 @@ export default function CollectionViewer() {
   const addDocument = async () => {
     try {
       await addDoc(collection(db, collectionName), newDocFields);
-      showNotification({ title: "Success", message: "Document added", color: "green" });
-      // Refresh docs
       const snap = await getDocs(collection(db, collectionName));
       setDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setAddModalOpened(false);
+      showNotification({ title: "Success", message: "Document added", color: "green" });
     } catch {
       showNotification({ title: "Error", message: "Failed to add document", color: "red" });
     }
   };
+
+  if (!loading && !permissions?.canView) {
+    return (
+      <Center h="100vh">
+        <Stack align="center">
+          <Title order={2}>Access Denied</Title>
+          <Text>You do not have permission to view this collection.</Text>
+        </Stack>
+      </Center>
+    );
+  }
 
   return (
     <Container size="xl" py="xl">
@@ -143,71 +199,64 @@ export default function CollectionViewer() {
             onChange={(e) => setSearch(e.currentTarget.value)}
             miw={250}
           />
-          <Button leftSection={<IconPlus size={16} />} onClick={addDocument}>
-            Add Document
-          </Button>
+          {collectionName !== "users" && (
+            <PermissionGate permission="canEdit">
+              <Button leftSection={<IconPlus size={16} />} onClick={() => setAddModalOpened(true)}>
+                Add Document
+              </Button>
+            </PermissionGate>
+          )}
         </Group>
       </Flex>
 
       <Card withBorder radius="md" shadow="xs" p="lg">
-        <Box style={{ overflowX: "auto" }}>
-          <Table
-            striped
-            highlightOnHover
-            withColumnBorders
-            verticalSpacing="md"
-          >
+        <Box style={{ overflowX: "auto", overflowY: "hidden" }}>
+          <Table striped highlightOnHover withColumnBorders verticalSpacing="md">
             <thead>
               <tr>
-                <th style={{ minWidth: 240, textAlign: "left" }}>ID</th>
-                {allKeys.map((key) => (
-                  <th key={`header-${key}`} style={{ minWidth: 120, textAlign: "left" }}>
-                    {key}
-                  </th>
+                <th style={{ ...centerCellStyle, minWidth: 240 }}>ID</th>
+                {fields.map((key) => (
+                  <th key={key} style={centerCellStyle}>{key}</th>
                 ))}
-                <th style={{ textAlign: "center", minWidth: 120 }}>Actions</th>
+                <th style={centerCellStyle}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length > 0 ? (
                 filtered.map((doc) => (
                   <tr key={doc.id}>
-                    <td style={{ wordBreak: "break-all", maxWidth: 240 }}>
-                      {doc.id}
-                    </td>
-                    {allKeys.map((key) => (
-                      <td key={`${doc.id}-${key}`} style={{ minWidth: 120 }}>
-                        {String(doc[key] ?? "—")}
+                    <td style={{ ...centerCellStyle, wordBreak: "break-all", maxWidth: 240 }}>{doc.id}</td>
+                    {fields.map((key) => (
+                      <td key={key} style={centerCellStyle}>
+                        {key === "role" ? (
+                          <Badge variant="light" color="blue">
+                            {displayValue(doc[key])}
+                          </Badge>
+                        ) : (
+                          displayValue(doc[key])
+                        )}
                       </td>
                     ))}
-                    <td style={{ textAlign: "center", minWidth: 120 }}>
+                    <td style={centerCellStyle}>
                       <Group gap="xs" justify="center">
-                        <ActionIcon
-                          color="blue"
-                          variant="light"
-                          size="md"
-                          onClick={() => handleEdit(doc)}
-                        >
-                          <IconEdit size={16} />
-                        </ActionIcon>
-                        <ActionIcon
-                          color="red"
-                          variant="light"
-                          size="md"
-                          onClick={() => handleDelete(doc.id)}
-                        >
-                          <IconTrash size={16} />
-                        </ActionIcon>
+                        <PermissionGate permission="canEdit">
+                          <ActionIcon color="blue" variant="light" size="md" onClick={() => handleEdit(doc)}>
+                            <IconEdit size={16} />
+                          </ActionIcon>
+                        </PermissionGate>
+                        <PermissionGate permission="canDelete">
+                          <ActionIcon color="red" variant="light" size="md" onClick={() => handleDelete(doc.id)}>
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        </PermissionGate>
                       </Group>
                     </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={allKeys.length + 2}>
-                    <Box ta="center" py="sm">
-                      No matching documents found.
-                    </Box>
+                  <td colSpan={fields.length + 2}>
+                    <Box ta="center" py="sm">No matching documents found.</Box>
                   </td>
                 </tr>
               )}
@@ -216,33 +265,48 @@ export default function CollectionViewer() {
         </Box>
       </Card>
 
-      <Modal
-        opened={modalOpened}
-        onClose={() => setModalOpened(false)}
-        title="Edit Document"
-        centered
-      >
+      {/* Edit Modal */}
+      <Modal opened={modalOpened} onClose={() => setModalOpened(false)} title="Edit Document" centered>
         <Stack>
-          {editingDoc &&
-            Object.keys(editFields).map((key, i) => (
-              <TextInput
-                key={`${editingDoc.id}-${key}`}
-                label={key}
-                value={editFields[key] ?? ""}
-                autoFocus={i === 0}
-                onChange={(e) =>
-                  setEditFields((prev) => ({
-                    ...prev,
-                    [key]: e.currentTarget.value,
-                  }))
-                }
-              />
-            ))}
+          {fields.map((key, i) => (
+            <TextInput
+              key={`edit-${key}`}
+              label={key}
+              value={editFields[key] ?? ""}
+              autoFocus={i === 0}
+              onChange={(e) =>
+                setEditFields((prev) => ({ ...prev, [key]: e.currentTarget.value }))
+              }
+            />
+          ))}
           <Group justify="flex-end">
             <Button onClick={saveEdit}>Save</Button>
           </Group>
         </Stack>
       </Modal>
+
+      {/* Add Modal */}
+      {addModalOpened && fields.length > 0 && (
+        <Modal opened={addModalOpened} onClose={() => setAddModalOpened(false)} title="Add New Document" centered>
+          <Stack>
+            {fields.map((key, i) => (
+              <TextInput
+                key={`new-${key}`}
+                label={key}
+                value={typeof newDocFields[key] === "string" ? newDocFields[key] : ""}
+                autoFocus={i === 0}
+                onChange={(e) => {
+                  const val = e?.currentTarget?.value ?? "";
+                  setNewDocFields((prev) => ({ ...prev, [key]: val }));
+                }}
+              />
+            ))}
+            <Group justify="flex-end">
+              <Button onClick={addDocument}>Create</Button>
+            </Group>
+          </Stack>
+        </Modal>
+      )}
     </Container>
   );
 }

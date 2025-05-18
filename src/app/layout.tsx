@@ -4,6 +4,7 @@ import "./globals.css";
 import "@mantine/core/styles.css";
 import ThemeProvider from "@/lib/theme";
 import HeaderBar from "@/lib/header";
+import RouteLoader from "@/lib/loader";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -25,7 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <ThemeProvider>
           <HeaderBar />
-          {children}
+          <RouteLoader>{children}</RouteLoader>
         </ThemeProvider>
       </body>
     </html>
