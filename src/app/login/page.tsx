@@ -1,4 +1,3 @@
-// app/login/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -14,18 +13,20 @@ export default function LoginPage() {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setUser(user);
       if (user) {
-        router.push("/dashboard"); // redirect after login
+        router.push("/dashboard");
       }
     });
     return () => unsubscribe();
-  }, []);
+  }, [router]);
 
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
-    } catch (err) {
-      console.error("Login error:", err);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        console.error("Login error:", err.message);
+      }
     }
   };
 

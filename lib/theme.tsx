@@ -3,7 +3,6 @@
 import {
   MantineProvider,
   ColorSchemeScript,
-  useComputedColorScheme,
 } from "@mantine/core";
 import { createTheme } from "@mantine/core";
 import { useState, createContext, useContext } from "react";

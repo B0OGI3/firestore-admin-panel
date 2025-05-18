@@ -29,23 +29,31 @@ import {
 import { db } from "@/lib/firebaseConfig";
 import { showNotification } from "@mantine/notifications";
 
+type FirestoreDoc = {
+  id: string;
+  [key: string]: string | number | boolean | null | undefined;
+};
+
 export default function CollectionViewer() {
   const params = useParams();
   const collectionName = params.collection as string;
 
-  const [docs, setDocs] = useState<any[]>([]);
+  const [docs, setDocs] = useState<FirestoreDoc[]>([]);
   const [search, setSearch] = useState("");
-  const [editingDoc, setEditingDoc] = useState<any | null>(null);
+  const [editingDoc, setEditingDoc] = useState<FirestoreDoc | null>(null);
   const [editFields, setEditFields] = useState<Record<string, string>>({});
   const [modalOpened, setModalOpened] = useState(false);
-  const [newDocFields, setNewDocFields] = useState({ name: "", email: "" });
+
+  const newDocFields = {
+    name: "",
+    email: "",
+  };
 
   useEffect(() => {
     const fetchDocs = async () => {
       const snap = await getDocs(collection(db, collectionName));
       setDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     };
-
     fetchDocs();
   }, [collectionName]);
 
@@ -60,15 +68,23 @@ export default function CollectionViewer() {
     new Set(docs.flatMap((doc) => Object.keys(doc).filter((k) => k !== "id")))
   );
 
-  const handleEdit = (doc: any) => {
+  const handleEdit = (doc: FirestoreDoc) => {
     setEditingDoc(doc);
-    setEditFields({ ...doc });
+    setEditFields(
+      Object.fromEntries(
+        Object.entries(doc).filter(([, v]) => typeof v === "string")
+
+      ) as Record<string, string>
+    );
     setModalOpened(true);
   };
+  
 
   const saveEdit = async () => {
+    if (!editingDoc) return;
     try {
-      const { id, ...updated } = editFields;
+      const updated = { ...editFields };
+      delete updated.id;
       await updateDoc(doc(db, collectionName, editingDoc.id), updated);
       showNotification({ title: "Saved", message: "Document updated", color: "green" });
       window.location.reload();
