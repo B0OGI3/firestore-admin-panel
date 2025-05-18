@@ -17,25 +17,29 @@
     "@mantine/hooks": "^8.0.0",
     "@mantine/notifications": "^8.0.0",
     "@tabler/icons-react": "^3.33.0",
-    "firebase": "^10.8.0",
-    "next": "^14.1.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "firebase": "10.6.0",
+    "next": "14.1.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
   },
   "devDependencies": {
+    "@next/eslint-plugin-next": "14.1.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
     "@types/node": "^20.11.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
-    "@eslint/config-array": "^1.0.0",
-    "@eslint/object-schema": "^1.0.0",
-    "eslint": "^9.0.0",
-    "eslint-config-next": "^14.1.0",
+    "eslint": "^8.56.0",
+    "eslint-config-next": "14.1.0",
+    "eslint-plugin-react": "^7.33.2",
+    "eslint-plugin-react-hooks": "^4.6.0",
     "husky": "^9.0.0",
     "lint-staged": "^15.2.0",
     "prettier": "^3.2.0",
-    "typescript": "^5.3.0",
-    "rimraf": "^5.0.5",
-    "glob": "^10.3.10"
+    "typescript": "5.0.4"
+  },
+  "resolutions": {
+    "undici": "5.28.2"
   },
   "engines": {
     "node": ">=18.0.0"

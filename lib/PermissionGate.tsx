@@ -64,10 +64,10 @@ export default function PermissionGate({
       <Loader />
     </Center>
   ),
-}: PermissionGateProps) {
+}: PermissionGateProps): JSX.Element {
   const { permissions, loading } = useRolePermissions();
 
-  if (loading) return loadingFallback;
+  if (loading) return <>{loadingFallback}</>;
 
   // Always grant access to admin users
   if (permissions?.role === 'admin') {
@@ -79,7 +79,9 @@ export default function PermissionGate({
   const shouldRender = not ? !hasPermission : hasPermission;
 
   if (!shouldRender) {
-    return fallback || (
+    return fallback ? (
+      <>{fallback}</>
+    ) : (
       <Center h="100%">
         <Stack align="center" gap="xs">
           <Title order={3}>Access Denied</Title>
