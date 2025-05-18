@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import {
   GoogleAuthProvider,
   signInWithPopup,
-  signOut,
   onAuthStateChanged,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
@@ -32,7 +31,6 @@ import {
 
 export default function LoginPage() {
   const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<"login" | "signup">("login");
@@ -40,7 +38,6 @@ export default function LoginPage() {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
       if (user) {
         router.replace("/dashboard");
       }
@@ -73,23 +70,23 @@ export default function LoginPage() {
     try {
       const result = await signInWithPopup(auth, provider);
       await ensureUserInFirestore(result.user);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      if (err instanceof Error) setError(err.message);
+      else setError("An unexpected error occurred.");
     }
   };
 
   const handleEmailAuth = async () => {
     try {
-      let result;
-      if (mode === "signup") {
-        result = await createUserWithEmailAndPassword(auth, email, password);
-      } else {
-        result = await signInWithEmailAndPassword(auth, email, password);
-      }
+      const result =
+        mode === "signup"
+          ? await createUserWithEmailAndPassword(auth, email, password)
+          : await signInWithEmailAndPassword(auth, email, password);
 
       await ensureUserInFirestore(result.user);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      if (err instanceof Error) setError(err.message);
+      else setError("An unexpected error occurred.");
     }
   };
 

@@ -1,23 +1,23 @@
 "use client";
 
 import {
+  Badge,
   Button,
   Checkbox,
+  CloseButton,
   Code,
   Container,
   Divider,
+  Group,
+  Select,
   Stack,
   Text,
   TextInput,
   Title,
-  Group,
-  Badge,
-  CloseButton,
 } from "@mantine/core";
 import {
   collection,
   doc,
-  getDoc,
   getDocs,
   setDoc,
   deleteDoc,
@@ -25,19 +25,29 @@ import {
 import { useEffect, useState } from "react";
 import { db } from "@/lib/firebaseConfig";
 
-const defaultPermissions = [
-  "canView",
-  "canEdit",
-  "canDelete",
-  "canManageRoles",
+const defaultPermissions = ["canView", "canEdit", "canDelete", "canManageRoles"];
+
+type NewField = {
+  name: string;
+  type: "text" | "number" | "boolean" | "select";
+  options?: string;
+};
+
+const fieldTypes = [
+  { value: "text", label: "Text" },
+  { value: "number", label: "Number" },
+  { value: "boolean", label: "Boolean" },
+  { value: "select", label: "Select (dropdown)" },
 ];
 
 export default function SettingsPage() {
   const [defaultRole, setDefaultRole] = useState("viewer");
   const [collections, setCollections] = useState<string[]>([]);
   const [newCollection, setNewCollection] = useState("");
-  const [newCollectionFields, setNewCollectionFields] = useState("");
-  const [roles, setRoles] = useState<Record<string, any>>({});
+  const [newFields, setNewFields] = useState<NewField[]>([]);
+  type RolePermissions = Record<string, boolean>;
+  const [roles, setRoles] = useState<Record<string, RolePermissions>>({});
+
   const [newRole, setNewRole] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -47,7 +57,6 @@ export default function SettingsPage() {
       const items: string[] = [];
       snap.forEach((doc) => items.push(doc.id));
 
-      // Ensure "users" is included
       if (!items.includes("users")) {
         items.unshift("users");
       }
@@ -55,8 +64,8 @@ export default function SettingsPage() {
       setCollections(items);
 
       const roleSnap = await getDocs(collection(db, "roles"));
-      const roleResult: Record<string, any> = {};
-      roleSnap.forEach((d) => (roleResult[d.id] = d.data()));
+      const roleResult: Record<string, RolePermissions> = {};
+      roleSnap.forEach((d) => (roleResult[d.id] = d.data() as RolePermissions));
       setRoles(roleResult);
 
       setLoading(false);
@@ -79,7 +88,7 @@ export default function SettingsPage() {
     await setDoc(doc(db, "roles", role), roles[role]);
   };
 
-  const addRole = async () => {
+  const addRole = () => {
     const newData = defaultPermissions.reduce(
       (acc, key) => ({ ...acc, [key]: false }),
       {}
@@ -90,19 +99,26 @@ export default function SettingsPage() {
 
   const addCollection = async () => {
     const name = newCollection.trim().toLowerCase();
-    const fields = newCollectionFields
-      .split(",")
-      .map((f) => f.trim())
-      .filter((f) => f);
-
     if (!name || collections.includes(name) || name === "users") return;
+
+    const fieldsToSave = newFields
+      .filter((f) => f.name.trim())
+      .map((f) => ({
+        name: f.name.trim(),
+        type: f.type,
+        ...(f.type === "select" && f.options
+          ? { options: f.options.split(",").map((o) => o.trim()).filter(Boolean) }
+          : {}),
+      }));
+
     await setDoc(doc(db, "config/collections/items", name), {
       createdAt: Date.now(),
-      fields,
+      fields: fieldsToSave,
     });
+
     setCollections((prev) => [...prev, name]);
     setNewCollection("");
-    setNewCollectionFields("");
+    setNewFields([]);
   };
 
   const removeCollection = async (name: string) => {
@@ -156,19 +172,83 @@ export default function SettingsPage() {
           ))}
         </Group>
 
-        <Group>
+        {/* 🔧 Dynamic Collection Creator */}
+        <Stack mt="md" p="md" style={{ border: "1px solid #e0e0e0", borderRadius: 8 }}>
+          <Title order={4}>Create New Collection</Title>
+
           <TextInput
-            placeholder="New collection name"
+            label="Collection Name"
+            placeholder="e.g. products"
             value={newCollection}
             onChange={(e) => setNewCollection(e.currentTarget.value)}
           />
-          <TextInput
-            placeholder="Fields (comma separated)"
-            value={newCollectionFields}
-            onChange={(e) => setNewCollectionFields(e.currentTarget.value)}
-          />
-          <Button onClick={addCollection}>Add</Button>
-        </Group>
+          
+          {newFields.map((field, index) => (
+            <Group key={index} align="flex-end">
+              <TextInput
+                label="Field Name"
+                placeholder="e.g. price"
+                value={field.name}
+                onChange={(e) => {
+                  const val = e?.currentTarget?.value ?? "";
+                  setNewFields((prev) =>
+                    prev.map((f, i) => (i === index ? { ...f, name: val } : f))
+                  );
+                }}
+                style={{ flex: 1 }}
+              />
+              <Select
+                label="Type"
+                data={fieldTypes}
+                value={field.type ?? "text"}
+                onChange={(val) => {
+                  if (!val) return;
+                  setNewFields((prev) =>
+                    prev.map((f, i) =>
+                      i === index ? { ...f, ttype: val as NewField["type"], options: undefined } : f
+                    )
+                  );
+                }}
+                style={{ width: 180 }}
+              />
+              {field.type === "select" && (
+                <TextInput
+                  label="Options (comma separated)"
+                  placeholder="e.g. A,B,C"
+                  value={field.options ?? ""}
+                  onChange={(e) => {
+                    const val = e?.currentTarget?.value ?? "";
+                    setNewFields((prev) =>
+                      prev.map((f, i) => (i === index ? { ...f, options: val } : f))
+                    );
+                  }}
+                  style={{ flex: 1 }}
+                />
+              )}
+              <CloseButton
+                aria-label="Remove field"
+                onClick={() =>
+                  setNewFields((prev) => prev.filter((_, i) => i !== index))
+                }
+              />
+            </Group>
+          ))}
+
+
+          <Button
+            variant="light"
+            onClick={() => setNewFields((prev) => [...prev, { name: "", type: "text" }])}
+          >
+            + Add Field
+          </Button>
+
+          <Button
+            onClick={addCollection}
+            disabled={!newCollection.trim() || newFields.length === 0}
+          >
+            Create Collection
+          </Button>
+        </Stack>
 
         <Button onClick={saveSettings}>Save General Settings</Button>
 

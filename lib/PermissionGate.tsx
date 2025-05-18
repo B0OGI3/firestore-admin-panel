@@ -27,7 +27,7 @@ export default function PermissionGate({
 
   if (loading) return loadingFallback;
 
-  const hasPermission = !!permissions[permission];
+  const hasPermission = permissions ? !!permissions[permission as keyof typeof permissions] : false;
   const shouldRender = not ? !hasPermission : hasPermission;
 
   if (!shouldRender) {

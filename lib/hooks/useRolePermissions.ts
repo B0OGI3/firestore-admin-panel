@@ -1,62 +1,52 @@
+// src/lib/hooks/useRolePermissions.ts
 import { useEffect, useState } from "react";
-import { onAuthStateChanged, User } from "firebase/auth";
-import { getDoc, doc } from "firebase/firestore";
-import { auth, db } from "../firebaseConfig";
-
-type Permissions = Record<string, boolean>;
+import { onAuthStateChanged } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
+import { auth, db } from "@/lib/firebaseConfig";
 
 export function useRolePermissions() {
-  const [role, setRole] = useState<string | null>(null);
-  const [permissions, setPermissions] = useState<Permissions>({});
+
+    type Permissions = {
+        role: string;
+        canView: boolean;
+        canEdit: boolean;
+        canDelete: boolean;
+        canManageRoles?: boolean;
+      };
+      
+  const [permissions, setPermissions] = useState<Permissions | null>(null);
+      
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [roleMissing, setRoleMissing] = useState(false);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user: User | null) => {
-      setLoading(true);
-      setError(null);
-      setRoleMissing(false);
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) return;
 
       try {
-        if (!user) {
-          setRole(null);
-          setPermissions({});
-          setLoading(false);
-          return;
-        }
+        const userSnap = await getDoc(doc(db, "users", user.uid));
+        const userData = userSnap.data();
+        const role = userData?.role ?? "viewer";
 
-        const userRef = doc(db, "users", user.uid);
-        const userSnap = await getDoc(userRef);
+        const roleSnap = await getDoc(doc(db, "roles", role));
+        const roleData = roleSnap.exists() ? roleSnap.data() : {};
 
-        let userRole = userSnap.data()?.role;
-
-        // Fallback to global.defaultRole if none set
-        if (!userRole) {
-          const globalSnap = await getDoc(doc(db, "app_config", "global"));
-          userRole = globalSnap.data()?.defaultRole || "viewer";
-          setRoleMissing(true);
-        }
-
-        setRole(userRole);
-
-        const roleSnap = await getDoc(doc(db, "roles", userRole));
-        if (!roleSnap.exists()) {
-          setPermissions({});
-          setError(`Role "${userRole}" not found.`);
-        } else {
-          setPermissions(roleSnap.data() as Permissions);
-        }
-      } catch (err: any) {
-        setError("Failed to load role permissions.");
-        console.error(err);
+        setPermissions({
+          role,
+          canView: roleData?.canView ?? false,
+          canEdit: roleData?.canEdit ?? false,
+          canDelete: roleData?.canDelete ?? false,
+          canManageRoles: roleData?.canManageRoles ?? false,
+        });
+      } catch (err) {
+        console.error("Failed to load role permissions", err);
+        setPermissions({ role: "unknown", canView: false, canEdit: false, canDelete: false });
       } finally {
         setLoading(false);
       }
     });
 
-    return () => unsub();
+    return unsubscribe;
   }, []);
 
-  return { role, permissions, loading, error, roleMissing };
+  return { permissions, loading };
 }

@@ -16,10 +16,23 @@ import {
   TextInput,
   Title,
   Center,
+  Select,
+  NumberInput,
 } from "@mantine/core";
+
 import { IconEdit, IconTrash, IconPlus } from "@tabler/icons-react";
-import { useEffect, useState, type CSSProperties } from "react";
-import { useParams, useRouter } from "next/navigation";
+
+import {
+  useEffect,
+  useState,
+  type CSSProperties
+} from "react";
+
+import {
+  useParams,
+  useRouter
+} from "next/navigation";
+
 import {
   getDocs,
   getDoc,
@@ -29,11 +42,25 @@ import {
   updateDoc,
   addDoc,
 } from "firebase/firestore";
+
 import { auth, db } from "@/lib/firebaseConfig";
 import { showNotification } from "@mantine/notifications";
 import { onAuthStateChanged } from "firebase/auth";
 import PermissionGate from "@/lib/PermissionGate";
 import { useRolePermissions } from "@/lib/hooks/useRolePermissions";
+
+const centerCellStyle: CSSProperties = {
+  textAlign: "center",
+  minWidth: 120,
+};
+
+type DocumentUpdate = Record<string, string | number | boolean>;
+
+type FieldDef = {
+  name: string;
+  type: "text" | "number" | "boolean" | "select";
+  options?: string[];
+};
 
 type FirestoreDoc = {
   id: string;
@@ -46,7 +73,7 @@ export default function CollectionViewer() {
   const collectionName = params.collection as string;
 
   const [docs, setDocs] = useState<FirestoreDoc[]>([]);
-  const [fields, setFields] = useState<string[]>([]);
+  const [fields, setFields] = useState<FieldDef[]>([]);
   const [search, setSearch] = useState("");
   const [editingDoc, setEditingDoc] = useState<FirestoreDoc | null>(null);
   const [editFields, setEditFields] = useState<Record<string, string>>({});
@@ -55,15 +82,70 @@ export default function CollectionViewer() {
   const [addModalOpened, setAddModalOpened] = useState(false);
   const { permissions, loading } = useRolePermissions();
 
-  const centerCellStyle: CSSProperties = {
-    textAlign: "center",
-    minWidth: 120,
-  };
-
-  const displayValue = (val: any): string => {
+  const displayValue = (val: string | number | boolean | null | undefined): string => {
     if (val === null || val === undefined) return "–";
     if (typeof val === "string") return val.trim() || "–";
     return String(val);
+  };
+
+  const renderFieldInput = (
+    f: FieldDef,
+    value: string,
+    onChange: (val: string) => void,
+    autoFocus = false
+  ) => {
+    const comboboxProps = { withinPortal: false, zIndex: 3000 };
+
+    switch (f.type) {
+      case "number":
+        return (
+          <NumberInput
+            key={f.name}
+            label={f.name}
+            value={value ? Number(value) : undefined}
+            onChange={(val) => onChange(val?.toString() ?? "")}
+            autoFocus={autoFocus}
+          />
+        );
+
+      case "boolean":
+        return (
+          <Select
+            key={f.name}
+            label={f.name}
+            value={value}
+            onChange={(val) => onChange(val ?? "")}
+            data={[
+              { value: "true", label: "True" },
+              { value: "false", label: "False" },
+            ]}
+            comboboxProps={comboboxProps}
+          />
+        );
+
+      case "select":
+        return (
+          <Select
+            key={f.name}
+            label={f.name}
+            value={value}
+            onChange={(val) => onChange(val ?? "")}
+            data={(f.options ?? []).map((opt) => ({ value: opt, label: opt }))}
+            comboboxProps={comboboxProps}
+          />
+        );
+
+      default:
+        return (
+          <TextInput
+            key={f.name}
+            label={f.name}
+            value={value}
+            onChange={(e) => onChange(e.currentTarget.value)}
+            autoFocus={autoFocus}
+          />
+        );
+    }
   };
 
   useEffect(() => {
@@ -76,7 +158,11 @@ export default function CollectionViewer() {
   useEffect(() => {
     const fetchFields = async () => {
       if (collectionName === "users") {
-        setFields(["name", "email", "role"]);
+        setFields([
+          { name: "name", type: "text" },
+          { name: "email", type: "text" },
+          { name: "role", type: "select", options: ["admin", "editor", "viewer"] },
+        ]);
         return;
       }
 
@@ -84,7 +170,9 @@ export default function CollectionViewer() {
         const snap = await getDoc(doc(db, "config/collections/items", collectionName));
         if (snap.exists()) {
           const data = snap.data();
-          const declaredFields = Array.isArray(data.fields) ? data.fields : [];
+          const declaredFields = Array.isArray(data.fields)
+            ? (data.fields as FieldDef[])
+            : [];
           setFields(declaredFields);
         }
       } catch {
@@ -111,7 +199,7 @@ export default function CollectionViewer() {
   useEffect(() => {
     if (addModalOpened) {
       const initial: Record<string, string> = {};
-      fields.forEach((key) => (initial[key] = ""));
+      fields.forEach((f) => (initial[f.name] = ""));
       setNewDocFields(initial);
     }
   }, [addModalOpened, fields]);
@@ -123,9 +211,9 @@ export default function CollectionViewer() {
   const handleEdit = (doc: FirestoreDoc) => {
     setEditingDoc(doc);
     const safeFields: Record<string, string> = {};
-    fields.forEach((key) => {
-      const val = doc[key];
-      safeFields[key] =
+    fields.forEach((f) => {
+      const val = doc[f.name];
+      safeFields[f.name] =
         typeof val === "string" || typeof val === "number" || typeof val === "boolean"
           ? String(val)
           : "";
@@ -137,11 +225,18 @@ export default function CollectionViewer() {
   const saveEdit = async () => {
     if (!editingDoc) return;
     try {
-      const updated = { ...editFields };
+      const updated: DocumentUpdate = {};
+      fields.forEach((f) => {
+        const val = editFields[f.name];
+        updated[f.name] =
+          f.type === "number"
+            ? parseFloat(val)
+            : f.type === "boolean"
+            ? val === "true"
+            : val;
+      });
       await updateDoc(doc(db, collectionName, editingDoc.id), updated);
-      setDocs((prev) =>
-        prev.map((d) => (d.id === editingDoc.id ? { ...d, ...updated } : d))
-      );
+      setDocs((prev) => prev.map((d) => (d.id === editingDoc.id ? { ...d, ...updated } : d)));
       setModalOpened(false);
       showNotification({ title: "Saved", message: "Document updated", color: "green" });
     } catch {
@@ -162,7 +257,17 @@ export default function CollectionViewer() {
 
   const addDocument = async () => {
     try {
-      await addDoc(collection(db, collectionName), newDocFields);
+      const parsed: DocumentUpdate = {};
+      fields.forEach((f) => {
+        const val = newDocFields[f.name];
+        parsed[f.name] =
+          f.type === "number"
+            ? parseFloat(val)
+            : f.type === "boolean"
+            ? val === "true"
+            : val;
+      });
+      await addDoc(collection(db, collectionName), parsed);
       const snap = await getDocs(collection(db, collectionName));
       setDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setAddModalOpened(false);
@@ -189,7 +294,7 @@ export default function CollectionViewer() {
         <Box>
           <Title order={2}>{collectionName}</Title>
           <Text size="sm" c="dimmed">
-            Manage and edit your Firestore collection
+            Role: <strong>{permissions?.role ?? "Unknown"}</strong> · Manage and edit your Firestore collection
           </Text>
         </Box>
         <Group gap="sm">
@@ -210,13 +315,15 @@ export default function CollectionViewer() {
       </Flex>
 
       <Card withBorder radius="md" shadow="xs" p="lg">
-        <Box style={{ overflowX: "auto", overflowY: "hidden" }}>
+        <Box style={{ overflowX: "auto" }}>
           <Table striped highlightOnHover withColumnBorders verticalSpacing="md">
             <thead>
               <tr>
                 <th style={{ ...centerCellStyle, minWidth: 240 }}>ID</th>
-                {fields.map((key) => (
-                  <th key={key} style={centerCellStyle}>{key}</th>
+                {fields.map((f, i) => (
+                  <th key={`head-${f.name}-${i}`} style={centerCellStyle}>
+                    {f.name}
+                  </th>
                 ))}
                 <th style={centerCellStyle}>Actions</th>
               </tr>
@@ -226,14 +333,14 @@ export default function CollectionViewer() {
                 filtered.map((doc) => (
                   <tr key={doc.id}>
                     <td style={{ ...centerCellStyle, wordBreak: "break-all", maxWidth: 240 }}>{doc.id}</td>
-                    {fields.map((key) => (
-                      <td key={key} style={centerCellStyle}>
-                        {key === "role" ? (
+                    {fields.map((f, i) => (
+                      <td key={`cell-${f.name}-${i}`} style={centerCellStyle}>
+                        {f.name === "role" ? (
                           <Badge variant="light" color="blue">
-                            {displayValue(doc[key])}
+                            {displayValue(doc[f.name])}
                           </Badge>
                         ) : (
-                          displayValue(doc[key])
+                          displayValue(doc[f.name])
                         )}
                       </td>
                     ))}
@@ -256,7 +363,9 @@ export default function CollectionViewer() {
               ) : (
                 <tr>
                   <td colSpan={fields.length + 2}>
-                    <Box ta="center" py="sm">No matching documents found.</Box>
+                    <Box ta="center" py="sm">
+                      No matching documents found.
+                    </Box>
                   </td>
                 </tr>
               )}
@@ -265,48 +374,37 @@ export default function CollectionViewer() {
         </Box>
       </Card>
 
-      {/* Edit Modal */}
       <Modal opened={modalOpened} onClose={() => setModalOpened(false)} title="Edit Document" centered>
         <Stack>
-          {fields.map((key, i) => (
-            <TextInput
-              key={`edit-${key}`}
-              label={key}
-              value={editFields[key] ?? ""}
-              autoFocus={i === 0}
-              onChange={(e) =>
-                setEditFields((prev) => ({ ...prev, [key]: e.currentTarget.value }))
-              }
-            />
-          ))}
+          {fields.map((f, i) =>
+            renderFieldInput(
+              f,
+              editFields[f.name] ?? "",
+              (val) => setEditFields((prev) => ({ ...prev, [f.name]: val })),
+              i === 0
+            )
+          )}
           <Group justify="flex-end">
             <Button onClick={saveEdit}>Save</Button>
           </Group>
         </Stack>
       </Modal>
 
-      {/* Add Modal */}
-      {addModalOpened && fields.length > 0 && (
-        <Modal opened={addModalOpened} onClose={() => setAddModalOpened(false)} title="Add New Document" centered>
-          <Stack>
-            {fields.map((key, i) => (
-              <TextInput
-                key={`new-${key}`}
-                label={key}
-                value={typeof newDocFields[key] === "string" ? newDocFields[key] : ""}
-                autoFocus={i === 0}
-                onChange={(e) => {
-                  const val = e?.currentTarget?.value ?? "";
-                  setNewDocFields((prev) => ({ ...prev, [key]: val }));
-                }}
-              />
-            ))}
-            <Group justify="flex-end">
-              <Button onClick={addDocument}>Create</Button>
-            </Group>
-          </Stack>
-        </Modal>
-      )}
+      <Modal opened={addModalOpened} onClose={() => setAddModalOpened(false)} title="Add New Document" centered>
+        <Stack>
+          {fields.map((f, i) =>
+            renderFieldInput(
+              f,
+              newDocFields[f.name] ?? "",
+              (val) => setNewDocFields((prev) => ({ ...prev, [f.name]: val })),
+              i === 0
+            )
+          )}
+          <Group justify="flex-end">
+            <Button onClick={addDocument}>Create</Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Container>
   );
 }
