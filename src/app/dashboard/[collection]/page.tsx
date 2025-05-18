@@ -1,5 +1,20 @@
 "use client";
 
+/**
+ * CollectionViewer Component
+ * 
+ * A dynamic collection viewer and editor for Firestore collections.
+ * This component automatically generates a UI based on the collection's field definitions
+ * and handles CRUD operations with proper permission checks.
+ * 
+ * Features:
+ * - Dynamic field rendering based on field type
+ * - Inline document editing
+ * - Real-time search filtering
+ * - Role-based access control
+ * - Responsive table layout
+ */
+
 import {
   ActionIcon,
   Badge,
@@ -16,7 +31,7 @@ import {
   TextInput,
   Title,
   Center,
-  Select,
+  NativeSelect,
   NumberInput,
 } from "@mantine/core";
 
@@ -48,23 +63,23 @@ import { showNotification } from "@mantine/notifications";
 import { onAuthStateChanged } from "firebase/auth";
 import PermissionGate from "@/lib/PermissionGate";
 import { useRolePermissions } from "@/lib/hooks/useRolePermissions";
+import { validateDocument, validateField } from "@/lib/validation";
+import type { FieldDef, FirestoreDoc, DocumentUpdate } from "@/types";
 
 const centerCellStyle: CSSProperties = {
   textAlign: "center",
   minWidth: 120,
 };
 
-type DocumentUpdate = Record<string, string | number | boolean>;
-
-type FieldDef = {
-  name: string;
-  type: "text" | "number" | "boolean" | "select";
-  options?: string[];
-};
-
-type FirestoreDoc = {
-  id: string;
-  [key: string]: string | number | boolean | null | undefined;
+/**
+ * Utility function to format display values
+ * @param val - The value to format
+ * @returns Formatted string representation of the value
+ */
+const displayValue = (val: string | number | boolean | null | undefined): string => {
+  if (val === null || val === undefined) return "–";
+  if (typeof val === "string") return val.trim() || "–";
+  return String(val);
 };
 
 export default function CollectionViewer() {
@@ -80,58 +95,134 @@ export default function CollectionViewer() {
   const [newDocFields, setNewDocFields] = useState<Record<string, string>>({});
   const [modalOpened, setModalOpened] = useState(false);
   const [addModalOpened, setAddModalOpened] = useState(false);
+  const [editFieldErrors, setEditFieldErrors] = useState<Record<string, string>>({});
+  const [newFieldErrors, setNewFieldErrors] = useState<Record<string, string>>({});
   const { permissions, loading } = useRolePermissions();
 
-  const displayValue = (val: string | number | boolean | null | undefined): string => {
-    if (val === null || val === undefined) return "–";
-    if (typeof val === "string") return val.trim() || "–";
-    return String(val);
+  const validateAndUpdateField = (
+    fieldDef: FieldDef,
+    value: string,
+    isNewDoc: boolean
+  ) => {
+    const error = validateField(
+      fieldDef.name,
+      fieldDef.type === "number" ? parseFloat(value) || 0 : value,
+      fieldDef.validation
+    );
+    
+    if (isNewDoc) {
+      setNewFieldErrors(prev => ({
+        ...prev,
+        [fieldDef.name]: error?.message || ""
+      }));
+    } else {
+      setEditFieldErrors(prev => ({
+        ...prev,
+        [fieldDef.name]: error?.message || ""
+      }));
+    }
+    
+    return !error;
   };
 
   const renderFieldInput = (
     f: FieldDef,
     value: string,
     onChange: (val: string) => void,
-    autoFocus = false
+    autoFocus = false,
+    isNewDoc = false
   ) => {
-    const comboboxProps = { withinPortal: false, zIndex: 3000 };
+    const error = isNewDoc ? newFieldErrors[f.name] : editFieldErrors[f.name];
+    const commonProps = {
+      label: f.name,
+      error: error,
+      description: f.description,
+      autoFocus: autoFocus
+    };
+
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+      const val = e.currentTarget?.value;
+      onChange(val);
+      validateAndUpdateField(f, val, isNewDoc);
+    };
+
+    const handleNumberChange = (val: number | string) => {
+      const stringVal = String(val ?? '');
+      onChange(stringVal);
+      validateAndUpdateField(f, stringVal, isNewDoc);
+    };
 
     switch (f.type) {
       case "number":
         return (
           <NumberInput
             key={f.name}
-            label={f.name}
-            value={value ? Number(value) : undefined}
-            onChange={(val) => onChange(val?.toString() ?? "")}
-            autoFocus={autoFocus}
+            {...commonProps}
+            value={value ? Number(value) : 0}
+            onChange={handleNumberChange}
+            allowNegative
+            allowDecimal
           />
         );
 
       case "boolean":
         return (
-          <Select
+          <NativeSelect
             key={f.name}
-            label={f.name}
-            value={value}
-            onChange={(val) => onChange(val ?? "")}
+            {...commonProps}
+            value={value || "false"}
+            onChange={handleInputChange}
             data={[
               { value: "true", label: "True" },
               { value: "false", label: "False" },
             ]}
-            comboboxProps={comboboxProps}
           />
         );
 
-      case "select":
+      case "select": {
+        const options = Array.isArray(f.options) ? f.options : [];
         return (
-          <Select
+          <NativeSelect
             key={f.name}
-            label={f.name}
+            {...commonProps}
+            value={value || ""}
+            onChange={handleInputChange}
+            data={options.map(opt => ({ value: opt, label: opt }))}
+          />
+        );
+      }
+
+      case "date":
+        // TODO: Implement date picker
+        return (
+          <TextInput
+            key={f.name}
+            {...commonProps}
             value={value}
-            onChange={(val) => onChange(val ?? "")}
-            data={(f.options ?? []).map((opt) => ({ value: opt, label: opt }))}
-            comboboxProps={comboboxProps}
+            onChange={handleInputChange}
+            type="date"
+          />
+        );
+
+      case "email":
+        return (
+          <TextInput
+            key={f.name}
+            {...commonProps}
+            value={value}
+            onChange={handleInputChange}
+            type="email"
+          />
+        );
+
+      case "url":
+        return (
+          <TextInput
+            key={f.name}
+            {...commonProps}
+            value={value}
+            onChange={handleInputChange}
+            type="url"
           />
         );
 
@@ -139,10 +230,9 @@ export default function CollectionViewer() {
         return (
           <TextInput
             key={f.name}
-            label={f.name}
+            {...commonProps}
             value={value}
-            onChange={(e) => onChange(e.currentTarget.value)}
-            autoFocus={autoFocus}
+            onChange={handleInputChange}
           />
         );
     }
@@ -199,7 +289,10 @@ export default function CollectionViewer() {
   useEffect(() => {
     if (addModalOpened) {
       const initial: Record<string, string> = {};
-      fields.forEach((f) => (initial[f.name] = ""));
+      fields.forEach((f) => {
+        initial[f.name] = f.type === "boolean" ? "false" : "";
+        console.log('Setting initial field:', f.name, 'Value:', initial[f.name]);
+      });
       setNewDocFields(initial);
     }
   }, [addModalOpened, fields]);
@@ -213,10 +306,8 @@ export default function CollectionViewer() {
     const safeFields: Record<string, string> = {};
     fields.forEach((f) => {
       const val = doc[f.name];
-      safeFields[f.name] =
-        typeof val === "string" || typeof val === "number" || typeof val === "boolean"
-          ? String(val)
-          : "";
+      console.log('Setting edit field:', f.name, 'Value:', val, 'Type:', typeof val);
+      safeFields[f.name] = val !== null && val !== undefined ? String(val) : (f.type === "boolean" ? "false" : "");
     });
     setEditFields(safeFields);
     setModalOpened(true);
@@ -227,20 +318,46 @@ export default function CollectionViewer() {
     try {
       const updated: DocumentUpdate = {};
       fields.forEach((f) => {
-        const val = editFields[f.name];
+        const val = editFields[f.name] ?? "";
         updated[f.name] =
           f.type === "number"
-            ? parseFloat(val)
+            ? parseFloat(val) || 0
             : f.type === "boolean"
             ? val === "true"
             : val;
       });
+
+      // Validate before saving
+      const validation = validateDocument(updated, fields);
+      if (!validation.isValid) {
+        validation.errors.forEach((error) => {
+          showNotification({
+            title: `Error in ${error.field}`,
+            message: error.message,
+            color: "red",
+            autoClose: 5000,
+          });
+        });
+        return;
+      }
+
       await updateDoc(doc(db, collectionName, editingDoc.id), updated);
       setDocs((prev) => prev.map((d) => (d.id === editingDoc.id ? { ...d, ...updated } : d)));
       setModalOpened(false);
-      showNotification({ title: "Saved", message: "Document updated", color: "green" });
+      setEditFieldErrors({});
+      showNotification({ 
+        title: "Success", 
+        message: "Document updated successfully", 
+        color: "green",
+        autoClose: 3000 
+      });
     } catch {
-      showNotification({ title: "Error", message: "Failed to save", color: "red" });
+      showNotification({ 
+        title: "Error", 
+        message: "Failed to save document", 
+        color: "red",
+        autoClose: 5000 
+      });
     }
   };
 
@@ -259,21 +376,47 @@ export default function CollectionViewer() {
     try {
       const parsed: DocumentUpdate = {};
       fields.forEach((f) => {
-        const val = newDocFields[f.name];
+        const val = newDocFields[f.name] ?? "";
         parsed[f.name] =
           f.type === "number"
-            ? parseFloat(val)
+            ? parseFloat(val) || 0
             : f.type === "boolean"
             ? val === "true"
             : val;
       });
+
+      // Validate before adding
+      const validation = validateDocument(parsed, fields);
+      if (!validation.isValid) {
+        validation.errors.forEach((error) => {
+          showNotification({
+            title: `Error in ${error.field}`,
+            message: error.message,
+            color: "red",
+            autoClose: 5000,
+          });
+        });
+        return;
+      }
+
       await addDoc(collection(db, collectionName), parsed);
       const snap = await getDocs(collection(db, collectionName));
       setDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setAddModalOpened(false);
-      showNotification({ title: "Success", message: "Document added", color: "green" });
+      setNewFieldErrors({});
+      showNotification({ 
+        title: "Success", 
+        message: "Document added successfully", 
+        color: "green",
+        autoClose: 3000 
+      });
     } catch {
-      showNotification({ title: "Error", message: "Failed to add document", color: "red" });
+      showNotification({ 
+        title: "Error", 
+        message: "Failed to add document", 
+        color: "red",
+        autoClose: 5000 
+      });
     }
   };
 
@@ -374,14 +517,28 @@ export default function CollectionViewer() {
         </Box>
       </Card>
 
-      <Modal opened={modalOpened} onClose={() => setModalOpened(false)} title="Edit Document" centered>
+      <Modal 
+        opened={modalOpened} 
+        onClose={() => {
+          setModalOpened(false);
+          setEditFieldErrors({});
+        }}
+        title="Edit Document" 
+        centered
+        size="lg"
+        overlayProps={{
+          backgroundOpacity: 0.55,
+          blur: 3
+        }}
+      >
         <Stack>
           {fields.map((f, i) =>
             renderFieldInput(
               f,
               editFields[f.name] ?? "",
               (val) => setEditFields((prev) => ({ ...prev, [f.name]: val })),
-              i === 0
+              i === 0,
+              false
             )
           )}
           <Group justify="flex-end">
@@ -390,14 +547,28 @@ export default function CollectionViewer() {
         </Stack>
       </Modal>
 
-      <Modal opened={addModalOpened} onClose={() => setAddModalOpened(false)} title="Add New Document" centered>
+      <Modal 
+        opened={addModalOpened} 
+        onClose={() => {
+          setAddModalOpened(false);
+          setNewFieldErrors({});
+        }}
+        title="Add New Document" 
+        centered
+        size="lg"
+        overlayProps={{
+          backgroundOpacity: 0.55,
+          blur: 3
+        }}
+      >
         <Stack>
           {fields.map((f, i) =>
             renderFieldInput(
               f,
               newDocFields[f.name] ?? "",
               (val) => setNewDocFields((prev) => ({ ...prev, [f.name]: val })),
-              i === 0
+              i === 0,
+              true
             )
           )}
           <Group justify="flex-end">
