@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import "@mantine/core/styles.css";
-import ThemeProvider from "@/lib/theme";
+import "@mantine/notifications/styles.css";
+import Providers from "./providers";
 import HeaderBar from "@/lib/header";
 import RouteLoader from "@/lib/loader";
 
@@ -20,10 +21,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={inter.className}>
       <body>
-        <ThemeProvider>
+        <Providers>
           <HeaderBar />
           <RouteLoader>{children}</RouteLoader>
-        </ThemeProvider>
+        </Providers>
       </body>
     </html>
   );

@@ -22,15 +22,20 @@ import PermissionGate from "@/lib/PermissionGate";
 import { signOut } from "firebase/auth";
 import { auth } from "@/lib/firebaseConfig";
 
-export default function HeaderBar() {
+export default function HeaderBar(): JSX.Element {
   const pathname = usePathname();
   const router = useRouter();
   const showBack = pathname?.startsWith("/dashboard/") && pathname !== "/dashboard";
   const { colorScheme, toggle } = useThemeToggle();
 
-  const handleLogout = async () => {
-    await signOut(auth);
-    router.replace("/login");
+  const handleLogout = async (): Promise<void> => {
+    try {
+      await signOut(auth);
+      router.replace("/login");
+    } catch (error) {
+      // Error handling is managed by Firebase Auth
+      router.replace("/login");
+    }
   };
 
   return (
@@ -49,7 +54,12 @@ export default function HeaderBar() {
         <Flex justify="space-between" align="center">
           <Group>
             {showBack && (
-              <ActionIcon onClick={() => router.back()} variant="subtle" size="lg">
+              <ActionIcon
+                onClick={() => void router.back()}
+                variant="subtle"
+                size="lg"
+                title="Go back"
+              >
                 <IconArrowLeft size={20} />
               </ActionIcon>
             )}
@@ -64,14 +74,14 @@ export default function HeaderBar() {
                 variant="light"
                 size="xs"
                 leftSection={<IconSettings size={16} />}
-                onClick={() => router.push("/dashboard/settings")}
+                onClick={() => void router.push("/dashboard/settings")}
               >
                 Config
               </Button>
             </PermissionGate>
 
             <ActionIcon
-              onClick={toggle}
+              onClick={() => void toggle()}
               variant="subtle"
               size="lg"
               title={`Switch to ${colorScheme === "light" ? "dark" : "light"} mode`}
@@ -80,7 +90,7 @@ export default function HeaderBar() {
             </ActionIcon>
 
             <ActionIcon
-              onClick={handleLogout}
+              onClick={() => void handleLogout()}
               variant="subtle"
               size="lg"
               title="Sign out"

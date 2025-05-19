@@ -3,10 +3,23 @@ import { useEffect, useState } from "react";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebaseConfig";
 import Link from "next/link";
-import { Container, Stack, Title, Button } from "@mantine/core";
+import { Container, Stack, Title, Button, Center, Text } from "@mantine/core";
+import { useRolePermissions } from "@/lib/hooks/useRolePermissions";
+import { useRouter } from "next/navigation";
+import { auth } from "@/lib/firebaseConfig";
+import { onAuthStateChanged } from "firebase/auth";
 
 export default function DashboardPage() {
   const [collections, setCollections] = useState<string[]>([]);
+  const { permissions, loading } = useRolePermissions();
+  const router = useRouter();
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (!user) router.replace("/login");
+    });
+    return unsubscribe;
+  }, [router]);
 
   useEffect(() => {
     const loadCollections = async () => {
@@ -17,6 +30,25 @@ export default function DashboardPage() {
     };
     loadCollections();
   }, []);
+
+  if (loading) {
+    return (
+      <Center h="100vh">
+        <Text>Loading collections...</Text>
+      </Center>
+    );
+  }
+
+  if (!permissions?.canView) {
+    return (
+      <Center h="100vh">
+        <Stack align="center">
+          <Title order={2}>Access Denied</Title>
+          <Text>You do not have permission to view collections.</Text>
+        </Stack>
+      </Center>
+    );
+  }
 
   return (
     <Container py="xl">

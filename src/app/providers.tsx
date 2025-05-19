@@ -1,14 +1,14 @@
 "use client";
 
-import { MantineProvider } from "@mantine/core";
 import { Notifications } from "@mantine/notifications";
 import { ReactNode } from "react";
+import ThemeProvider from "@/lib/theme";
 
 export default function Providers({ children }: { children: ReactNode }) {
   return (
-    <MantineProvider>
+    <ThemeProvider>
       <Notifications />
       {children}
-    </MantineProvider>
+    </ThemeProvider>
   );
 }

@@ -3,34 +3,41 @@
 import {
   MantineProvider,
   ColorSchemeScript,
+  createTheme,
 } from "@mantine/core";
-import { createTheme } from "@mantine/core";
 import { useState, useEffect, createContext, useContext } from "react";
 
 type ColorScheme = "light" | "dark";
 
-const ThemeContext = createContext<{
+interface ThemeContextType {
   colorScheme: ColorScheme;
   toggle: () => void;
-} | null>(null);
+}
+
+const ThemeContext = createContext<ThemeContextType | null>(null);
 
 export default function ThemeProvider({
   children,
 }: {
   children: React.ReactNode;
-}) {
+}): JSX.Element | null {
   const [mode, setMode] = useState<ColorScheme>("light");
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem("color-scheme");
     if (stored === "light" || stored === "dark") {
-      setMode(stored);
+      setMode(stored as ColorScheme);
+    } else {
+      // Check system preference
+      const systemPreference: ColorScheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      setMode(systemPreference);
+      localStorage.setItem("color-scheme", systemPreference);
     }
     setMounted(true);
   }, []);
 
-  const toggle = () => {
+  const toggle = (): void => {
     const next: ColorScheme = mode === "dark" ? "light" : "dark";
     setMode(next);
     localStorage.setItem("color-scheme", next);
@@ -46,8 +53,11 @@ export default function ThemeProvider({
 
   return (
     <>
-      <ColorSchemeScript defaultColorScheme="light" />
-      <MantineProvider theme={theme} forceColorScheme={mode}>
+      <ColorSchemeScript />
+      <MantineProvider 
+        theme={theme}
+        forceColorScheme={mode}
+      >
         <ThemeContext.Provider value={{ colorScheme: mode, toggle }}>
           {children}
         </ThemeContext.Provider>
@@ -56,9 +66,10 @@ export default function ThemeProvider({
   );
 }
 
-export function useThemeToggle() {
+export function useThemeToggle(): ThemeContextType {
   const ctx = useContext(ThemeContext);
-  if (!ctx)
+  if (!ctx) {
     throw new Error("useThemeToggle must be used within ThemeProvider");
+  }
   return ctx;
 }

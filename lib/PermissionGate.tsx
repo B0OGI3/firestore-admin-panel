@@ -2,7 +2,7 @@
 
 import { ReactNode } from "react";
 import { useRolePermissions } from "@/lib/hooks/useRolePermissions";
-import { Loader, Center, Text, Stack, Title } from "@mantine/core";
+import { Loader, Center } from "@mantine/core";
 
 /**
  * A component that conditionally renders its children based on user permissions.
@@ -64,7 +64,7 @@ export default function PermissionGate({
       <Loader />
     </Center>
   ),
-}: PermissionGateProps): JSX.Element {
+}: PermissionGateProps): JSX.Element | null {
   const { permissions, loading } = useRolePermissions();
 
   if (loading) return <>{loadingFallback}</>;
@@ -79,17 +79,7 @@ export default function PermissionGate({
   const shouldRender = not ? !hasPermission : hasPermission;
 
   if (!shouldRender) {
-    return fallback ? (
-      <>{fallback}</>
-    ) : (
-      <Center h="100%">
-        <Stack align="center" gap="xs">
-          <Title order={3}>Access Denied</Title>
-          <Text>You do not have permission: <code>{permission}</code></Text>
-          <Text size="sm" c="dimmed">Current role: {permissions?.role ?? 'Unknown'}</Text>
-        </Stack>
-      </Center>
-    );
+    return fallback ? <>{fallback}</> : null;
   }
 
   return <>{children}</>;

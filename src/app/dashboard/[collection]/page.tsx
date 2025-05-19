@@ -33,9 +33,11 @@ import {
   Center,
   NativeSelect,
   NumberInput,
+  FileInput,
+  Checkbox,
 } from "@mantine/core";
 
-import { IconEdit, IconTrash, IconPlus } from "@tabler/icons-react";
+import { IconEdit, IconTrash, IconPlus, IconDownload, IconUpload } from "@tabler/icons-react";
 
 import {
   useEffect,
@@ -52,16 +54,13 @@ import {
   getDocs,
   getDoc,
   collection,
-  deleteDoc,
   doc,
-  updateDoc,
-  addDoc,
+  writeBatch,
 } from "firebase/firestore";
 
 import { auth, db } from "@/lib/firebaseConfig";
 import { showNotification } from "@mantine/notifications";
 import { onAuthStateChanged } from "firebase/auth";
-import PermissionGate from "@/lib/PermissionGate";
 import { useRolePermissions } from "@/lib/hooks/useRolePermissions";
 import { validateDocument, validateField } from "@/lib/validation";
 import type { FieldDef, FirestoreDoc, DocumentUpdate } from "@/types";
@@ -69,6 +68,10 @@ import type { FieldDef, FirestoreDoc, DocumentUpdate } from "@/types";
 const centerCellStyle: CSSProperties = {
   textAlign: "center",
   minWidth: 120,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  padding: "0.5rem"
 };
 
 /**
@@ -98,6 +101,13 @@ export default function CollectionViewer() {
   const [editFieldErrors, setEditFieldErrors] = useState<Record<string, string>>({});
   const [newFieldErrors, setNewFieldErrors] = useState<Record<string, string>>({});
   const { permissions, loading } = useRolePermissions();
+  const [uploadModalOpened, setUploadModalOpened] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
+  const [bulkEditModalOpened, setBulkEditModalOpened] = useState(false);
+  const [bulkEditField, setBulkEditField] = useState<string>("");
+  const [bulkEditValue, setBulkEditValue] = useState<string>("");
 
   const validateAndUpdateField = (
     fieldDef: FieldDef,
@@ -291,7 +301,6 @@ export default function CollectionViewer() {
       const initial: Record<string, string> = {};
       fields.forEach((f) => {
         initial[f.name] = f.type === "boolean" ? "false" : "";
-        console.log('Setting initial field:', f.name, 'Value:', initial[f.name]);
       });
       setNewDocFields(initial);
     }
@@ -302,11 +311,11 @@ export default function CollectionViewer() {
   );
 
   const handleEdit = (doc: FirestoreDoc) => {
+    if (!permissions?.canEdit) return;
     setEditingDoc(doc);
     const safeFields: Record<string, string> = {};
     fields.forEach((f) => {
       const val = doc[f.name];
-      console.log('Setting edit field:', f.name, 'Value:', val, 'Type:', typeof val);
       safeFields[f.name] = val !== null && val !== undefined ? String(val) : (f.type === "boolean" ? "false" : "");
     });
     setEditFields(safeFields);
@@ -341,7 +350,17 @@ export default function CollectionViewer() {
         return;
       }
 
-      await updateDoc(doc(db, collectionName, editingDoc.id), updated);
+      // Create a new batch
+      const batch = writeBatch(db);
+      
+      // Add the update operation to the batch
+      const docRef = doc(db, collectionName, editingDoc.id);
+      batch.update(docRef, updated);
+
+      // Commit the batch
+      await batch.commit();
+
+      // Update local state
       setDocs((prev) => prev.map((d) => (d.id === editingDoc.id ? { ...d, ...updated } : d)));
       setModalOpened(false);
       setEditFieldErrors({});
@@ -362,9 +381,20 @@ export default function CollectionViewer() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!permissions?.canDelete) return;
     if (!confirm("Delete this document?")) return;
     try {
-      await deleteDoc(doc(db, collectionName, id));
+      // Create a new batch
+      const batch = writeBatch(db);
+      
+      // Add the delete operation to the batch
+      const docRef = doc(db, collectionName, id);
+      batch.delete(docRef);
+
+      // Commit the batch
+      await batch.commit();
+
+      // Update local state
       setDocs((prev) => prev.filter((d) => d.id !== id));
       showNotification({ title: "Deleted", message: "Document removed", color: "red" });
     } catch {
@@ -399,7 +429,19 @@ export default function CollectionViewer() {
         return;
       }
 
-      await addDoc(collection(db, collectionName), parsed);
+      // Create a new batch
+      const batch = writeBatch(db);
+      
+      // Create a new document reference
+      const newDocRef = doc(collection(db, collectionName));
+      
+      // Add the set operation to the batch
+      batch.set(newDocRef, parsed);
+
+      // Commit the batch
+      await batch.commit();
+
+      // Refresh the documents list
       const snap = await getDocs(collection(db, collectionName));
       setDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setAddModalOpened(false);
@@ -418,6 +460,223 @@ export default function CollectionViewer() {
         autoClose: 5000 
       });
     }
+  };
+
+  const downloadCSV = () => {
+    if (filtered.length === 0) {
+      showNotification({
+        title: "Error",
+        message: "No data to export",
+        color: "red",
+      });
+      return;
+    }
+
+    // Create CSV header
+    const headers = ['id', ...fields.map(f => f.name)];
+    const csvContent = [
+      headers.join(','),
+      ...filtered.map(doc => {
+        const row = [
+          doc.id,
+          ...fields.map(f => {
+            const value = doc[f.name];
+            // Handle special characters and quotes in CSV
+            if (typeof value === 'string' && (value.includes(',') || value.includes('"') || value.includes('\n'))) {
+              return `"${value.replace(/"/g, '""')}"`;
+            }
+            return value ?? '';
+          })
+        ];
+        return row.join(',');
+      })
+    ].join('\n');
+
+    // Create and download file
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `${collectionName}_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleCSVUpload = async () => {
+    if (!uploadFile) return;
+
+    try {
+      setUploading(true);
+      const text = await uploadFile.text();
+      const rows = text.split('\n').map(row => row.split(',').map(cell => cell.trim().replace(/^"|"$/g, '')));
+      
+      if (rows.length === 0) {
+        throw new Error('CSV file is empty');
+      }
+
+      const headers = rows[0];
+      if (!headers) {
+        throw new Error('CSV file is missing headers');
+      }
+      
+      // Validate headers
+      const expectedHeaders = ['id', ...fields.map(f => f.name)];
+      if (!expectedHeaders.every((h, i) => headers[i] === h)) {
+        throw new Error('CSV headers do not match collection fields');
+      }
+
+      // Create batch
+      const batch = writeBatch(db);
+      let successCount = 0;
+      let errorCount = 0;
+
+      // Process each row
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || row.length !== headers.length) continue;
+
+        try {
+          const docData: DocumentUpdate = {};
+          fields.forEach((f, index) => {
+            const value = row[index + 1] || ''; // +1 because first column is ID
+            docData[f.name] = f.type === 'number' ? parseFloat(value) || 0 :
+                             f.type === 'boolean' ? value === 'true' :
+                             value;
+          });
+
+          // Validate data
+          const validation = validateDocument(docData, fields);
+          if (!validation.isValid) {
+            errorCount++;
+            continue;
+          }
+
+          const docId = row[0];
+          if (!docId) {
+            errorCount++;
+            continue;
+          }
+
+          const docRef = doc(db, collectionName, docId);
+          batch.set(docRef, docData);
+          successCount++;
+        } catch {
+          errorCount++;
+        }
+      }
+
+      // Commit batch
+      await batch.commit();
+
+      // Refresh data
+      const snap = await getDocs(collection(db, collectionName));
+      setDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+
+      showNotification({
+        title: "Upload Complete",
+        message: `Successfully imported ${successCount} documents${errorCount > 0 ? `, ${errorCount} failed` : ''}`,
+        color: successCount > 0 ? "green" : "red",
+      });
+
+      setUploadModalOpened(false);
+      setUploadFile(null);
+    } catch (error) {
+      showNotification({
+        title: "Error",
+        message: error instanceof Error ? error.message : "Failed to upload CSV",
+        color: "red",
+      });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!permissions?.canDelete) return;
+    if (selectedDocs.size === 0) return;
+    if (!confirm(`Delete ${selectedDocs.size} selected documents?`)) return;
+
+    try {
+      const batch = writeBatch(db);
+      selectedDocs.forEach(id => {
+        const docRef = doc(db, collectionName, id);
+        batch.delete(docRef);
+      });
+
+      await batch.commit();
+      setDocs(prev => prev.filter(d => !selectedDocs.has(d.id)));
+      setSelectedDocs(new Set());
+      showNotification({
+        title: "Success",
+        message: `Deleted ${selectedDocs.size} documents`,
+        color: "green",
+      });
+    } catch {
+      showNotification({
+        title: "Error",
+        message: "Failed to delete documents",
+        color: "red",
+      });
+    }
+  };
+
+  const handleBulkEdit = async () => {
+    if (!permissions?.canEdit) return;
+    if (selectedDocs.size === 0) return;
+    if (!bulkEditField || bulkEditValue === undefined) return;
+
+    try {
+      const batch = writeBatch(db);
+      const field = fields.find(f => f.name === bulkEditField);
+      if (!field) return;
+
+      const parsedValue = field.type === "number" ? parseFloat(bulkEditValue) || 0 :
+                         field.type === "boolean" ? bulkEditValue === "true" :
+                         bulkEditValue;
+
+      selectedDocs.forEach(id => {
+        const docRef = doc(db, collectionName, id);
+        batch.update(docRef, { [bulkEditField]: parsedValue });
+      });
+
+      await batch.commit();
+      setDocs(prev => prev.map(d => 
+        selectedDocs.has(d.id) ? { ...d, [bulkEditField]: parsedValue } : d
+      ));
+      setSelectedDocs(new Set());
+      setBulkEditModalOpened(false);
+      showNotification({
+        title: "Success",
+        message: `Updated ${selectedDocs.size} documents`,
+        color: "green",
+      });
+    } catch {
+      showNotification({
+        title: "Error",
+        message: "Failed to update documents",
+        color: "red",
+      });
+    }
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedDocs.size === filtered.length) {
+      setSelectedDocs(new Set());
+    } else {
+      setSelectedDocs(new Set(filtered.map(d => d.id)));
+    }
+  };
+
+  const toggleSelectDoc = (id: string) => {
+    const newSelected = new Set(selectedDocs);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedDocs(newSelected);
   };
 
   if (!loading && !permissions?.canView) {
@@ -447,35 +706,87 @@ export default function CollectionViewer() {
             onChange={(e) => setSearch(e.currentTarget.value)}
             miw={250}
           />
-          {collectionName !== "users" && (
-            <PermissionGate permission="canEdit">
-              <Button leftSection={<IconPlus size={16} />} onClick={() => setAddModalOpened(true)}>
+          {collectionName !== "users" && permissions?.canEdit && (
+            <>
+              {selectedDocs.size > 0 && (
+                <Group gap="xs">
+                  <Button 
+                    variant="light" 
+                    color="red"
+                    onClick={handleBulkDelete}
+                  >
+                    Delete Selected ({selectedDocs.size})
+                  </Button>
+                  <Button 
+                    variant="light"
+                    onClick={() => setBulkEditModalOpened(true)}
+                  >
+                    Edit Selected ({selectedDocs.size})
+                  </Button>
+                </Group>
+              )}
+              <Button 
+                leftSection={<IconDownload size={16} />} 
+                variant="light"
+                onClick={downloadCSV}
+              >
+                Download CSV
+              </Button>
+              <Button 
+                leftSection={<IconUpload size={16} />} 
+                variant="light"
+                onClick={() => setUploadModalOpened(true)}
+              >
+                Upload CSV
+              </Button>
+              <Button 
+                leftSection={<IconPlus size={16} />} 
+                onClick={() => setAddModalOpened(true)}
+              >
                 Add Document
               </Button>
-            </PermissionGate>
+            </>
           )}
         </Group>
       </Flex>
 
       <Card withBorder radius="md" shadow="xs" p="lg">
-        <Box style={{ overflowX: "auto" }}>
-          <Table striped highlightOnHover withColumnBorders verticalSpacing="md">
+        <Box style={{ overflowX: "auto", overflowY: "hidden" }}>
+          <Table striped highlightOnHover withColumnBorders verticalSpacing="md" style={{ tableLayout: "fixed" }}>
             <thead>
               <tr>
-                <th style={{ ...centerCellStyle, minWidth: 240 }}>ID</th>
+                <th style={{ ...centerCellStyle, width: "120px" }}>
+                  <Group gap="xs" justify="flex-start" wrap="nowrap">
+                    <Checkbox
+                      checked={selectedDocs.size === filtered.length && filtered.length > 0}
+                      indeterminate={selectedDocs.size > 0 && selectedDocs.size < filtered.length}
+                      onChange={toggleSelectAll}
+                    />
+                    <Text size="sm" c="dimmed" style={{ whiteSpace: 'nowrap' }}>Select All</Text>
+                  </Group>
+                </th>
+                <th style={{ ...centerCellStyle, width: "240px" }}>ID</th>
                 {fields.map((f, i) => (
                   <th key={`head-${f.name}-${i}`} style={centerCellStyle}>
                     {f.name}
                   </th>
                 ))}
-                <th style={centerCellStyle}>Actions</th>
+                <th style={{ ...centerCellStyle, width: "100px" }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length > 0 ? (
                 filtered.map((doc) => (
                   <tr key={doc.id}>
-                    <td style={{ ...centerCellStyle, wordBreak: "break-all", maxWidth: 240 }}>{doc.id}</td>
+                    <td style={{ ...centerCellStyle, width: "120px" }}>
+                      <Group gap="xs" justify="flex-start" wrap="nowrap">
+                        <Checkbox
+                          checked={selectedDocs.has(doc.id)}
+                          onChange={() => toggleSelectDoc(doc.id)}
+                        />
+                      </Group>
+                    </td>
+                    <td style={{ ...centerCellStyle, width: "240px" }}>{doc.id}</td>
                     {fields.map((f, i) => (
                       <td key={`cell-${f.name}-${i}`} style={centerCellStyle}>
                         {f.name === "role" ? (
@@ -487,25 +798,33 @@ export default function CollectionViewer() {
                         )}
                       </td>
                     ))}
-                    <td style={centerCellStyle}>
+                    <td style={{ ...centerCellStyle, width: "100px" }}>
                       <Group gap="xs" justify="center">
-                        <PermissionGate permission="canEdit">
-                          <ActionIcon color="blue" variant="light" size="md" onClick={() => handleEdit(doc)}>
-                            <IconEdit size={16} />
-                          </ActionIcon>
-                        </PermissionGate>
-                        <PermissionGate permission="canDelete">
-                          <ActionIcon color="red" variant="light" size="md" onClick={() => handleDelete(doc.id)}>
-                            <IconTrash size={16} />
-                          </ActionIcon>
-                        </PermissionGate>
+                        <ActionIcon 
+                          color="blue" 
+                          variant="light" 
+                          size="md" 
+                          onClick={() => handleEdit(doc)}
+                          style={{ display: 'inline-flex' }}
+                        >
+                          <IconEdit size={16} />
+                        </ActionIcon>
+                        <ActionIcon 
+                          color="red" 
+                          variant="light" 
+                          size="md" 
+                          onClick={() => handleDelete(doc.id)}
+                          style={{ display: 'inline-flex' }}
+                        >
+                          <IconTrash size={16} />
+                        </ActionIcon>
                       </Group>
                     </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={fields.length + 2}>
+                  <td colSpan={fields.length + 3}>
                     <Box ta="center" py="sm">
                       No matching documents found.
                     </Box>
@@ -573,6 +892,70 @@ export default function CollectionViewer() {
           )}
           <Group justify="flex-end">
             <Button onClick={addDocument}>Create</Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={uploadModalOpened}
+        onClose={() => {
+          setUploadModalOpened(false);
+          setUploadFile(null);
+        }}
+        title="Upload CSV"
+        centered
+      >
+        <Stack>
+          <Text size="sm" c="dimmed">
+            Upload a CSV file with the following columns: id, {fields.map(f => f.name).join(', ')}
+          </Text>
+          <FileInput
+            label="CSV File"
+            placeholder="Choose a CSV file"
+            accept=".csv"
+            value={uploadFile}
+            onChange={setUploadFile}
+          />
+          <Group justify="flex-end">
+            <Button
+              onClick={handleCSVUpload}
+              loading={uploading}
+              disabled={!uploadFile}
+            >
+              Upload
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* Bulk Edit Modal */}
+      <Modal
+        opened={bulkEditModalOpened}
+        onClose={() => {
+          setBulkEditModalOpened(false);
+          setBulkEditField("");
+          setBulkEditValue("");
+        }}
+        title={`Edit ${selectedDocs.size} Documents`}
+        centered
+      >
+        <Stack>
+          <NativeSelect
+            label="Field to Update"
+            data={fields.map(f => ({ value: f.name, label: f.name }))}
+            value={bulkEditField}
+            onChange={(e) => setBulkEditField(e.currentTarget.value)}
+          />
+          {bulkEditField && (
+            renderFieldInput(
+              fields.find(f => f.name === bulkEditField)!,
+              bulkEditValue,
+              setBulkEditValue,
+              true
+            )
+          )}
+          <Group justify="flex-end">
+            <Button onClick={handleBulkEdit}>Update All</Button>
           </Group>
         </Stack>
       </Modal>
