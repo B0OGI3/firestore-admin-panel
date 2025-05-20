@@ -18,11 +18,9 @@
 import {
   ActionIcon,
   Badge,
-  Box,
   Button,
   Card,
   Container,
-  Flex,
   Group,
   Modal,
   Stack,
@@ -31,18 +29,36 @@ import {
   TextInput,
   Title,
   Center,
-  NativeSelect,
   NumberInput,
-  FileInput,
   Checkbox,
+  Pagination,
+  Collapse,
+  Select,
+  SimpleGrid,
+  Box,
+  UnstyledButton,
+  Loader,
 } from "@mantine/core";
-
-import { IconEdit, IconTrash, IconPlus, IconDownload, IconUpload } from "@tabler/icons-react";
+import { Dropzone } from '@mantine/dropzone';
+import { 
+  IconEdit, 
+  IconTrash, 
+  IconPlus, 
+  IconDownload, 
+  IconUpload, 
+  IconFilter, 
+  IconX,
+  IconArrowUp,
+  IconArrowDown,
+  IconArrowsSort,
+} from "@tabler/icons-react";
 
 import {
   useEffect,
   useState,
-  type CSSProperties
+  type CSSProperties,
+  useCallback,
+  useMemo,
 } from "react";
 
 import {
@@ -64,6 +80,8 @@ import { onAuthStateChanged } from "firebase/auth";
 import { useRolePermissions } from "@/lib/hooks/useRolePermissions";
 import { validateDocument, validateField } from "@/lib/validation";
 import type { FieldDef, FirestoreDoc, DocumentUpdate } from "@/types";
+import { useDebouncedValue } from '@mantine/hooks';
+import { ChangelogService } from "@/lib/services/changelog";
 
 const centerCellStyle: CSSProperties = {
   textAlign: "center",
@@ -85,6 +103,10 @@ const displayValue = (val: string | number | boolean | null | undefined): string
   return String(val);
 };
 
+type SortDirection = 'asc' | 'desc' | null;
+
+type FilterValue = string | number | boolean;
+
 export default function CollectionViewer() {
   const router = useRouter();
   const params = useParams();
@@ -100,7 +122,7 @@ export default function CollectionViewer() {
   const [addModalOpened, setAddModalOpened] = useState(false);
   const [editFieldErrors, setEditFieldErrors] = useState<Record<string, string>>({});
   const [newFieldErrors, setNewFieldErrors] = useState<Record<string, string>>({});
-  const { permissions, loading } = useRolePermissions();
+  const { permissions, loading: permissionsLoading } = useRolePermissions();
   const [uploadModalOpened, setUploadModalOpened] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -108,6 +130,20 @@ export default function CollectionViewer() {
   const [bulkEditModalOpened, setBulkEditModalOpened] = useState(false);
   const [bulkEditField, setBulkEditField] = useState<string>("");
   const [bulkEditValue, setBulkEditValue] = useState<string>("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const ITEMS_PER_PAGE = 20;
+  const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
+  const [advancedFilters, setAdvancedFilters] = useState<Record<string, FilterValue>>({});
+  const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
+  const [numberOperators, setNumberOperators] = useState<Record<string, string>>({});
+  const [sortField, setSortField] = useState<string | null>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>(null);
+  const [debouncedSearch] = useDebouncedValue(search, 300);
+  const [debouncedFilters] = useDebouncedValue(advancedFilters, 300);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const [cachedDocs, setCachedDocs] = useState<FirestoreDoc[]>([]);
+  const [cachedFilteredDocs, setCachedFilteredDocs] = useState<FirestoreDoc[]>([]);
 
   const validateAndUpdateField = (
     fieldDef: FieldDef,
@@ -150,10 +186,12 @@ export default function CollectionViewer() {
       autoFocus: autoFocus
     };
 
-    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-      const val = e.currentTarget?.value;
-      onChange(val);
-      validateAndUpdateField(f, val, isNewDoc);
+    const handleInputChange = (val: string | null | React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+      const stringVal = typeof val === 'string' ? val : 
+                       val === null ? '' :
+                       val.currentTarget?.value || '';
+      onChange(stringVal);
+      validateAndUpdateField(f, stringVal, isNewDoc);
     };
 
     const handleNumberChange = (val: number | string) => {
@@ -177,33 +215,34 @@ export default function CollectionViewer() {
 
       case "boolean":
         return (
-          <NativeSelect
+          <Select
             key={f.name}
             {...commonProps}
-            value={value || "false"}
+            value={value || ""}
             onChange={handleInputChange}
             data={[
               { value: "true", label: "True" },
-              { value: "false", label: "False" },
+              { value: "false", label: "False" }
             ]}
+            clearable
           />
         );
 
       case "select": {
         const options = Array.isArray(f.options) ? f.options : [];
         return (
-          <NativeSelect
+          <Select
             key={f.name}
             {...commonProps}
             value={value || ""}
             onChange={handleInputChange}
             data={options.map(opt => ({ value: opt, label: opt }))}
+            clearable
           />
         );
       }
 
       case "date":
-        // TODO: Implement date picker
         return (
           <TextInput
             key={f.name}
@@ -248,6 +287,224 @@ export default function CollectionViewer() {
     }
   };
 
+  const renderAdvancedFilter = (field: FieldDef) => {
+    const value = advancedFilters[field.name] ?? '';
+    
+    switch (field.type) {
+      case 'number':
+        return (
+          <Box>
+            <Group align="flex-end" gap="xs">
+              <Select
+                label={field.name}
+                value={numberOperators[field.name] || '='}
+                onChange={(val: string | null) => {
+                  if (val) {
+                    setNumberOperators(prev => ({ ...prev, [field.name]: val }));
+                    setActiveFilters(prev => {
+                      const next = new Set(prev);
+                      if (advancedFilters[field.name] !== '') next.add(field.name);
+                      else next.delete(field.name);
+                      return next;
+                    });
+                  }
+                }}
+                data={[
+                  { value: '=', label: 'Equals' },
+                  { value: '>', label: 'Greater than' },
+                  { value: '<', label: 'Less than' },
+                  { value: '>=', label: 'Greater than or equal' },
+                  { value: '<=', label: 'Less than or equal' },
+                ]}
+                size="sm"
+                style={{ width: '40%' }}
+              />
+              <NumberInput
+                value={typeof value === 'number' ? value : ''}
+                onChange={(val: string | number) => {
+                  const numVal = typeof val === 'string' ? parseFloat(val) || 0 : val;
+                  setAdvancedFilters(prev => ({ ...prev, [field.name]: numVal }));
+                  setActiveFilters(prev => {
+                    const next = new Set(prev);
+                    if (numVal !== 0) next.add(field.name);
+                    else next.delete(field.name);
+                    return next;
+                  });
+                }}
+                placeholder={`Filter ${field.name}`}
+                size="sm"
+                style={{ flex: 1 }}
+                rightSection={
+                  value !== '' && (
+                    <ActionIcon
+                      size="sm"
+                      variant="transparent"
+                      onClick={() => {
+                        setAdvancedFilters(prev => ({ ...prev, [field.name]: '' }));
+                        setNumberOperators(prev => ({ ...prev, [field.name]: '=' }));
+                        setActiveFilters(prev => {
+                          const next = new Set(prev);
+                          next.delete(field.name);
+                          return next;
+                        });
+                      }}
+                    >
+                      <IconX size={14} />
+                    </ActionIcon>
+                  )
+                }
+              />
+            </Group>
+          </Box>
+        );
+
+      case 'boolean':
+        return (
+          <Select
+            label={field.name}
+            value={typeof value === 'boolean' ? String(value) : ''}
+            onChange={(val: string | null) => {
+              if (val !== null) {
+                const boolVal = val === 'true';
+                setAdvancedFilters(prev => ({ ...prev, [field.name]: boolVal }));
+                setActiveFilters(prev => {
+                  const next = new Set(prev);
+                  if (val !== '') next.add(field.name);
+                  else next.delete(field.name);
+                  return next;
+                });
+              }
+            }}
+            placeholder={`Filter ${field.name}`}
+            size="sm"
+            data={[
+              { value: 'true', label: 'True' },
+              { value: 'false', label: 'False' }
+            ]}
+            clearable
+            rightSection={
+              value !== '' && (
+                <ActionIcon
+                  size="sm"
+                  variant="transparent"
+                  onClick={() => {
+                    setAdvancedFilters(prev => ({ ...prev, [field.name]: '' }));
+                    setActiveFilters(prev => {
+                      const next = new Set(prev);
+                      next.delete(field.name);
+                      return next;
+                    });
+                  }}
+                >
+                  <IconX size={14} />
+                </ActionIcon>
+              )
+            }
+          />
+        );
+
+      case 'select':
+        return (
+          <Select
+            label={field.name}
+            value={typeof value === 'string' ? value : ''}
+            onChange={(val: string | null) => {
+              if (val !== null) {
+                setAdvancedFilters(prev => ({ ...prev, [field.name]: val }));
+                setActiveFilters(prev => {
+                  const next = new Set(prev);
+                  if (val !== '') next.add(field.name);
+                  else next.delete(field.name);
+                  return next;
+                });
+              }
+            }}
+            placeholder={`Filter ${field.name}`}
+            size="sm"
+            data={field.options?.map(opt => ({ value: opt, label: opt })) ?? []}
+            clearable
+            rightSection={
+              value !== '' && (
+                <ActionIcon
+                  size="sm"
+                  variant="transparent"
+                  onClick={() => {
+                    setAdvancedFilters(prev => ({ ...prev, [field.name]: '' }));
+                    setActiveFilters(prev => {
+                      const next = new Set(prev);
+                      next.delete(field.name);
+                      return next;
+                    });
+                  }}
+                >
+                  <IconX size={14} />
+                </ActionIcon>
+              )
+            }
+          />
+        );
+
+      default:
+        return (
+          <TextInput
+            label={field.name}
+            value={typeof value === 'string' ? value : ''}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+              setAdvancedFilters(prev => ({ ...prev, [field.name]: e.currentTarget.value }));
+              setActiveFilters(prev => {
+                const next = new Set(prev);
+                if (e.currentTarget.value !== '') next.add(field.name);
+                else next.delete(field.name);
+                return next;
+              });
+            }}
+            placeholder={`Filter ${field.name}`}
+            size="sm"
+            rightSection={
+              value !== '' && (
+                <ActionIcon
+                  size="sm"
+                  variant="transparent"
+                  onClick={() => {
+                    setAdvancedFilters(prev => ({ ...prev, [field.name]: '' }));
+                    setActiveFilters(prev => {
+                      const next = new Set(prev);
+                      next.delete(field.name);
+                      return next;
+                    });
+                  }}
+                >
+                  <IconX size={14} />
+                </ActionIcon>
+              )
+            }
+          />
+        );
+    }
+  };
+
+  const handleSort = (fieldName: string) => {
+    if (sortField === fieldName) {
+      // Cycle through: asc -> desc -> null
+      if (sortDirection === 'asc') {
+        setSortDirection('desc');
+      } else if (sortDirection === 'desc') {
+        setSortField(null);
+        setSortDirection(null);
+      }
+    } else {
+      setSortField(fieldName);
+      setSortDirection('asc');
+    }
+  };
+
+  const getSortIcon = (fieldName: string) => {
+    if (sortField !== fieldName) {
+      return <IconArrowsSort size={14} />;
+    }
+    return sortDirection === 'asc' ? <IconArrowUp size={14} /> : <IconArrowDown size={14} />;
+  };
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (!user) router.replace("/login");
@@ -259,9 +516,9 @@ export default function CollectionViewer() {
     const fetchFields = async () => {
       if (collectionName === "users") {
         setFields([
-          { name: "name", type: "text" },
-          { name: "email", type: "text" },
-          { name: "role", type: "select", options: ["admin", "editor", "viewer"] },
+          { name: "name", type: "text", order: 0 },
+          { name: "email", type: "text", order: 1 },
+          { name: "role", type: "select", options: ["admin", "editor", "viewer"], order: 2 },
         ]);
         return;
       }
@@ -273,7 +530,7 @@ export default function CollectionViewer() {
           const declaredFields = Array.isArray(data.fields)
             ? (data.fields as FieldDef[])
             : [];
-          setFields(declaredFields);
+          setFields(declaredFields.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)));
         }
       } catch {
         showNotification({ title: "Error", message: "Could not load fields", color: "red" });
@@ -283,18 +540,152 @@ export default function CollectionViewer() {
     fetchFields();
   }, [collectionName]);
 
-  useEffect(() => {
-    const fetchDocs = async () => {
-      if (!collectionName) return;
-      try {
-        const snap = await getDocs(collection(db, collectionName));
-        setDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      } catch {
-        showNotification({ title: "Error", message: "Failed to fetch documents", color: "red" });
+  // Memoize the filtered and sorted documents
+  const processedDocs = useMemo(() => {
+    if (!cachedFilteredDocs.length) return [];
+
+    if (!sortField || !sortDirection) return cachedFilteredDocs;
+
+    return [...cachedFilteredDocs].sort((a, b) => {
+      const field = fields.find(f => f.name === sortField);
+      if (!field) return 0;
+
+      const aValue = (a as Record<string, unknown>)[sortField];
+      const bValue = (b as Record<string, unknown>)[sortField];
+
+      // Handle null/undefined values
+      if (aValue === null || aValue === undefined) return 1;
+      if (bValue === null || bValue === undefined) return -1;
+
+      let comparison = 0;
+      switch (field.type) {
+        case 'number':
+          comparison = Number(aValue) - Number(bValue);
+          break;
+        case 'boolean':
+          comparison = String(aValue).localeCompare(String(bValue));
+          break;
+        default:
+          comparison = String(aValue).localeCompare(String(bValue));
       }
-    };
-    fetchDocs();
+
+      return sortDirection === 'asc' ? comparison : -comparison;
+    });
+  }, [cachedFilteredDocs, sortField, sortDirection, fields]);
+
+  // Memoize the current page's documents
+  const currentPageDocs = useMemo(() => {
+    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+    const endIndex = startIndex + ITEMS_PER_PAGE;
+    return processedDocs.slice(startIndex, endIndex);
+  }, [processedDocs, currentPage]);
+
+  // Memoize the total pages
+  const totalPages = useMemo(() => {
+    return Math.ceil(processedDocs.length / ITEMS_PER_PAGE);
+  }, [processedDocs]);
+
+  // Fetch all documents with caching
+  const fetchAllDocs = useCallback(async () => {
+    if (!collectionName) return;
+    try {
+      setLoading(true);
+      const allDocsSnap = await getDocs(collection(db, collectionName));
+      const allDocs = allDocsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setCachedDocs(allDocs);
+      setIsInitialLoad(false);
+    } catch (error) {
+      showNotification({ 
+        title: "Error", 
+        message: "Failed to fetch documents", 
+        color: "red" 
+      });
+    } finally {
+      setLoading(false);
+    }
   }, [collectionName]);
+
+  // Process filters and search
+  const processFilters = useCallback(() => {
+    if (!cachedDocs.length) return;
+
+    const filtered = cachedDocs.filter((doc) => {
+      // Apply text search if exists
+      if (debouncedSearch && !Object.entries(doc)
+        .filter(([key]) => key !== "id")
+        .some(([_, value]) =>
+          String(value)
+            .toLowerCase()
+            .includes(debouncedSearch.toLowerCase())
+        )) {
+        return false;
+      }
+
+      // Apply advanced filters
+      for (const [fieldName, filterValue] of Object.entries(debouncedFilters)) {
+        if (filterValue === '') continue;
+        
+        const field = fields.find(f => f.name === fieldName);
+        if (!field) continue;
+
+        const docValue = (doc as Record<string, unknown>)[fieldName];
+        
+        switch (field.type) {
+          case 'number': {
+            const operator = numberOperators[fieldName] || '=';
+            const numValue = Number(filterValue);
+            const numDocValue = Number(docValue);
+            
+            switch (operator) {
+              case '=':
+                if (numDocValue !== numValue) return false;
+                break;
+              case '>':
+                if (numDocValue <= numValue) return false;
+                break;
+              case '<':
+                if (numDocValue >= numValue) return false;
+                break;
+              case '>=':
+                if (numDocValue < numValue) return false;
+                break;
+              case '<=':
+                if (numDocValue > numValue) return false;
+                break;
+            }
+            break;
+          }
+          case 'boolean':
+            if (String(docValue) !== filterValue) return false;
+            break;
+          case 'select':
+            if (docValue !== filterValue) return false;
+            break;
+          default:
+            if (!String(docValue).toLowerCase().includes(String(filterValue).toLowerCase())) return false;
+        }
+      }
+
+      return true;
+    });
+
+    setCachedFilteredDocs(filtered);
+  }, [cachedDocs, debouncedSearch, debouncedFilters, fields, numberOperators]);
+
+  // Initial data fetch
+  useEffect(() => {
+    void fetchAllDocs();
+  }, [fetchAllDocs]);
+
+  // Process filters when dependencies change
+  useEffect(() => {
+    processFilters();
+  }, [processFilters]);
+
+  // Update displayed documents
+  useEffect(() => {
+    setDocs(currentPageDocs);
+  }, [currentPageDocs]);
 
   useEffect(() => {
     if (addModalOpened) {
@@ -305,10 +696,6 @@ export default function CollectionViewer() {
       setNewDocFields(initial);
     }
   }, [addModalOpened, fields]);
-
-  const filtered = docs.filter((doc) =>
-    Object.values(doc).join(" ").toLowerCase().includes(search.toLowerCase())
-  );
 
   const handleEdit = (doc: FirestoreDoc) => {
     if (!permissions?.canEdit) return;
@@ -360,22 +747,38 @@ export default function CollectionViewer() {
       // Commit the batch
       await batch.commit();
 
+      // Record the change in changelog
+      const user = auth.currentUser;
+      if (user) {
+        await ChangelogService.addEntry({
+          userId: user.uid,
+          userEmail: user.email || "unknown@example.com",
+          action: "update",
+          collection: collectionName,
+          documentId: editingDoc.id,
+          changes: {
+            before: { ...editingDoc, id: editingDoc.id },
+            after: { ...updated, id: editingDoc.id }
+          }
+        });
+      }
+
       // Update local state
       setDocs((prev) => prev.map((d) => (d.id === editingDoc.id ? { ...d, ...updated } : d)));
       setModalOpened(false);
       setEditFieldErrors({});
-      showNotification({ 
-        title: "Success", 
-        message: "Document updated successfully", 
+
+      showNotification({
+        title: "Success",
+        message: "Document updated successfully",
         color: "green",
-        autoClose: 3000 
       });
-    } catch {
-      showNotification({ 
-        title: "Error", 
-        message: "Failed to save document", 
+    } catch (error) {
+      console.error("Error updating document:", error);
+      showNotification({
+        title: "Error",
+        message: "Failed to update document",
         color: "red",
-        autoClose: 5000 
       });
     }
   };
@@ -384,6 +787,10 @@ export default function CollectionViewer() {
     if (!permissions?.canDelete) return;
     if (!confirm("Delete this document?")) return;
     try {
+      // Get the document data before deleting
+      const docToDelete = docs.find(d => d.id === id);
+      if (!docToDelete) return;
+
       // Create a new batch
       const batch = writeBatch(db);
       
@@ -393,6 +800,22 @@ export default function CollectionViewer() {
 
       // Commit the batch
       await batch.commit();
+
+      // Record the deletion in changelog
+      const user = auth.currentUser;
+      if (user) {
+        await ChangelogService.addEntry({
+          userId: user.uid,
+          userEmail: user.email || "unknown@example.com",
+          action: "delete",
+          collection: collectionName,
+          documentId: id,
+          changes: {
+            before: { ...docToDelete, id: id },
+            after: { id: id } // Keep the ID in the after state
+          }
+        });
+      }
 
       // Update local state
       setDocs((prev) => prev.filter((d) => d.id !== id));
@@ -441,6 +864,22 @@ export default function CollectionViewer() {
       // Commit the batch
       await batch.commit();
 
+      // Record the creation in changelog
+      const user = auth.currentUser;
+      if (user) {
+        await ChangelogService.addEntry({
+          userId: user.uid,
+          userEmail: user.email || "unknown@example.com",
+          action: "create",
+          collection: collectionName,
+          documentId: newDocRef.id,
+          changes: {
+            before: {}, // Empty object for new document
+            after: parsed
+          }
+        });
+      }
+
       // Refresh the documents list
       const snap = await getDocs(collection(db, collectionName));
       setDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -463,7 +902,7 @@ export default function CollectionViewer() {
   };
 
   const downloadCSV = () => {
-    if (filtered.length === 0) {
+    if (docs.length === 0) {
       showNotification({
         title: "Error",
         message: "No data to export",
@@ -476,7 +915,7 @@ export default function CollectionViewer() {
     const headers = ['id', ...fields.map(f => f.name)];
     const csvContent = [
       headers.join(','),
-      ...filtered.map(doc => {
+      ...docs.map(doc => {
         const row = [
           doc.id,
           ...fields.map(f => {
@@ -642,6 +1081,29 @@ export default function CollectionViewer() {
       });
 
       await batch.commit();
+
+      // Record the changes in changelog
+      const user = auth.currentUser;
+      if (user) {
+        const changelogPromises = Array.from(selectedDocs).map(async (docId) => {
+          const doc = docs.find(d => d.id === docId);
+          if (doc) {
+            await ChangelogService.addEntry({
+              userId: user.uid,
+              userEmail: user.email || "unknown@example.com",
+              action: "update",
+              collection: collectionName,
+              documentId: docId,
+              changes: {
+                before: { [bulkEditField]: doc[bulkEditField] },
+                after: { [bulkEditField]: parsedValue }
+              }
+            });
+          }
+        });
+        await Promise.all(changelogPromises);
+      }
+
       setDocs(prev => prev.map(d => 
         selectedDocs.has(d.id) ? { ...d, [bulkEditField]: parsedValue } : d
       ));
@@ -662,10 +1124,10 @@ export default function CollectionViewer() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedDocs.size === filtered.length) {
+    if (selectedDocs.size === docs.length) {
       setSelectedDocs(new Set());
     } else {
-      setSelectedDocs(new Set(filtered.map(d => d.id)));
+      setSelectedDocs(new Set(docs.map(d => d.id)));
     }
   };
 
@@ -679,7 +1141,11 @@ export default function CollectionViewer() {
     setSelectedDocs(newSelected);
   };
 
-  if (!loading && !permissions?.canView) {
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+  };
+
+  if (!permissionsLoading && !permissions?.canView) {
     return (
       <Center h="100vh">
         <Stack align="center">
@@ -691,234 +1157,311 @@ export default function CollectionViewer() {
   }
 
   return (
-    <Container size="xl" py="xl">
-      <Flex justify="space-between" align="center" mb="xl">
-        <Box>
-          <Title order={2}>{collectionName}</Title>
-          <Text size="sm" c="dimmed">
-            Role: <strong>{permissions?.role ?? "Unknown"}</strong> · Manage and edit your Firestore collection
-          </Text>
-        </Box>
-        <Group gap="sm">
-          <TextInput
-            placeholder="Search..."
-            value={search}
-            onChange={(e) => setSearch(e.currentTarget.value)}
-            miw={250}
-          />
-          {collectionName !== "users" && permissions?.canEdit && (
-            <>
-              {selectedDocs.size > 0 && (
-                <Group gap="xs">
-                  <Button 
-                    variant="light" 
-                    color="red"
-                    onClick={handleBulkDelete}
-                  >
-                    Delete Selected ({selectedDocs.size})
-                  </Button>
-                  <Button 
+    <Container size="xl" py="md">
+      <Card withBorder radius="lg" shadow="sm" mb="md">
+        <Stack gap="md">
+          <Group justify="space-between" align="center">
+            <Title order={2} size="h3" fw={600}>
+              {collectionName}
+            </Title>
+            <Group>
+              {permissions?.canEdit && (
+                <>
+                  <Button
                     variant="light"
-                    onClick={() => setBulkEditModalOpened(true)}
+                    leftSection={<IconPlus size={16} />}
+                    onClick={() => setAddModalOpened(true)}
+                    size="sm"
                   >
-                    Edit Selected ({selectedDocs.size})
+                    Add Document
                   </Button>
-                </Group>
+                  <Button
+                    variant="light"
+                    leftSection={<IconUpload size={16} />}
+                    onClick={() => setUploadModalOpened(true)}
+                    size="sm"
+                  >
+                    Import CSV
+                  </Button>
+                  <Button
+                    variant="light"
+                    leftSection={<IconDownload size={16} />}
+                    onClick={downloadCSV}
+                    size="sm"
+                  >
+                    Export CSV
+                  </Button>
+                  {selectedDocs.size > 0 && (
+                    <Button
+                      variant="light"
+                      color="red"
+                      leftSection={<IconTrash size={16} />}
+                      onClick={() => void handleBulkDelete()}
+                      size="sm"
+                    >
+                      Delete Selected
+                    </Button>
+                  )}
+                </>
               )}
-              <Button 
-                leftSection={<IconDownload size={16} />} 
-                variant="light"
-                onClick={downloadCSV}
-              >
-                Download CSV
-              </Button>
-              <Button 
-                leftSection={<IconUpload size={16} />} 
-                variant="light"
-                onClick={() => setUploadModalOpened(true)}
-              >
-                Upload CSV
-              </Button>
-              <Button 
-                leftSection={<IconPlus size={16} />} 
-                onClick={() => setAddModalOpened(true)}
-              >
-                Add Document
-              </Button>
-            </>
-          )}
-        </Group>
-      </Flex>
+            </Group>
+          </Group>
 
-      <Card withBorder radius="md" shadow="xs" p="lg">
-        <Box style={{ overflowX: "auto", overflowY: "hidden" }}>
-          <Table striped highlightOnHover withColumnBorders verticalSpacing="md" style={{ tableLayout: "fixed" }}>
-            <thead>
-              <tr>
-                <th style={{ ...centerCellStyle, width: "120px" }}>
-                  <Group gap="xs" justify="flex-start" wrap="nowrap">
-                    <Checkbox
-                      checked={selectedDocs.size === filtered.length && filtered.length > 0}
-                      indeterminate={selectedDocs.size > 0 && selectedDocs.size < filtered.length}
-                      onChange={toggleSelectAll}
-                    />
-                    <Text size="sm" c="dimmed" style={{ whiteSpace: 'nowrap' }}>Select All</Text>
-                  </Group>
-                </th>
-                <th style={{ ...centerCellStyle, width: "240px" }}>ID</th>
-                {fields.map((f, i) => (
-                  <th key={`head-${f.name}-${i}`} style={centerCellStyle}>
-                    {f.name}
-                  </th>
-                ))}
-                <th style={{ ...centerCellStyle, width: "100px" }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length > 0 ? (
-                filtered.map((doc) => (
-                  <tr key={doc.id}>
-                    <td style={{ ...centerCellStyle, width: "120px" }}>
-                      <Group gap="xs" justify="flex-start" wrap="nowrap">
+          <Group>
+            <TextInput
+              placeholder="Search documents..."
+              value={search}
+              onChange={(e) => setSearch(e.currentTarget.value)}
+              size="sm"
+              style={{ flex: 1 }}
+              rightSection={loading && <Loader size="xs" />}
+            />
+            <Button
+              variant="light"
+              leftSection={<IconFilter size={16} />}
+              onClick={() => setShowAdvancedSearch(!showAdvancedSearch)}
+              size="sm"
+            >
+              Advanced Search
+            </Button>
+          </Group>
+
+          <Collapse in={showAdvancedSearch}>
+            <Card withBorder mt="md">
+              <Stack>
+                <Group justify="space-between">
+                  <Text fw={500}>Advanced Filters</Text>
+                  {activeFilters.size > 0 && (
+                    <Button
+                      variant="subtle"
+                      color="red"
+                      size="xs"
+                      onClick={() => {
+                        setAdvancedFilters({});
+                        setActiveFilters(new Set());
+                      }}
+                    >
+                      Clear All Filters
+                    </Button>
+                  )}
+                </Group>
+                <SimpleGrid cols={{ base: 1, sm: 2, md: 3, lg: 4 }}>
+                  {fields.map((field) => renderAdvancedFilter(field))}
+                </SimpleGrid>
+              </Stack>
+            </Card>
+          </Collapse>
+        </Stack>
+      </Card>
+
+      <Card withBorder radius="lg" shadow="sm">
+        {isInitialLoad ? (
+          <Center p="xl">
+            <Loader size="lg" />
+          </Center>
+        ) : (
+          <>
+            <Table striped highlightOnHover withTableBorder withColumnBorders>
+              <Table.Thead>
+                <Table.Tr>
+                  {permissions?.canEdit && (
+                    <Table.Th style={{ width: 40 }}>
+                      <Checkbox
+                        checked={selectedDocs.size === docs.length}
+                        onChange={toggleSelectAll}
+                        size="sm"
+                      />
+                    </Table.Th>
+                  )}
+                  {fields.map((field) => (
+                    <Table.Th key={field.name} style={centerCellStyle}>
+                      <UnstyledButton
+                        onClick={() => handleSort(field.name)}
+                        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+                      >
+                        {field.name}
+                        {getSortIcon(field.name)}
+                      </UnstyledButton>
+                    </Table.Th>
+                  ))}
+                  {permissions?.canEdit && (
+                    <Table.Th style={{ width: 100 }}>Actions</Table.Th>
+                  )}
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {docs.map((doc) => (
+                  <Table.Tr key={doc.id}>
+                    {permissions?.canEdit && (
+                      <Table.Td>
                         <Checkbox
                           checked={selectedDocs.has(doc.id)}
                           onChange={() => toggleSelectDoc(doc.id)}
+                          size="sm"
                         />
-                      </Group>
-                    </td>
-                    <td style={{ ...centerCellStyle, width: "240px" }}>{doc.id}</td>
-                    {fields.map((f, i) => (
-                      <td key={`cell-${f.name}-${i}`} style={centerCellStyle}>
-                        {f.name === "role" ? (
-                          <Badge variant="light" color="blue">
-                            {displayValue(doc[f.name])}
+                      </Table.Td>
+                    )}
+                    {fields.map((field) => (
+                      <Table.Td key={field.name} style={centerCellStyle}>
+                        {field.type === "boolean" ? (
+                          <Badge
+                            color={doc[field.name] ? "green" : "red"}
+                            variant="light"
+                          >
+                            {String(doc[field.name])}
                           </Badge>
                         ) : (
-                          displayValue(doc[f.name])
+                          displayValue(doc[field.name])
                         )}
-                      </td>
+                      </Table.Td>
                     ))}
-                    <td style={{ ...centerCellStyle, width: "100px" }}>
-                      <Group gap="xs" justify="center">
-                        <ActionIcon 
-                          color="blue" 
-                          variant="light" 
-                          size="md" 
-                          onClick={() => handleEdit(doc)}
-                          style={{ display: 'inline-flex' }}
-                        >
-                          <IconEdit size={16} />
-                        </ActionIcon>
-                        <ActionIcon 
-                          color="red" 
-                          variant="light" 
-                          size="md" 
-                          onClick={() => handleDelete(doc.id)}
-                          style={{ display: 'inline-flex' }}
-                        >
-                          <IconTrash size={16} />
-                        </ActionIcon>
-                      </Group>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={fields.length + 3}>
-                    <Box ta="center" py="sm">
-                      No matching documents found.
-                    </Box>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </Table>
-        </Box>
+                    {permissions?.canEdit && (
+                      <Table.Td>
+                        <Group gap={4} justify="center">
+                          <ActionIcon
+                            variant="light"
+                            color="blue"
+                            onClick={() => handleEdit(doc)}
+                            size="sm"
+                          >
+                            <IconEdit size={16} />
+                          </ActionIcon>
+                          <ActionIcon
+                            variant="light"
+                            color="red"
+                            onClick={() => handleDelete(doc.id)}
+                            size="sm"
+                          >
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        </Group>
+                      </Table.Td>
+                    )}
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+            
+            <Group justify="center" mt="xl">
+              <Pagination
+                total={totalPages}
+                value={currentPage}
+                onChange={handlePageChange}
+                size="sm"
+                radius="md"
+                withEdges
+              />
+            </Group>
+          </>
+        )}
       </Card>
 
-      <Modal 
-        opened={modalOpened} 
-        onClose={() => {
-          setModalOpened(false);
-          setEditFieldErrors({});
-        }}
-        title="Edit Document" 
-        centered
+      {/* Edit Modal */}
+      <Modal
+        opened={modalOpened}
+        onClose={() => setModalOpened(false)}
+        title="Edit Document"
         size="lg"
-        overlayProps={{
-          backgroundOpacity: 0.55,
-          blur: 3
-        }}
+        centered
       >
-        <Stack>
-          {fields.map((f, i) =>
-            renderFieldInput(
-              f,
-              editFields[f.name] ?? "",
-              (val) => setEditFields((prev) => ({ ...prev, [f.name]: val })),
-              i === 0,
-              false
-            )
-          )}
-          <Group justify="flex-end">
-            <Button onClick={saveEdit}>Save</Button>
+        <Stack gap="md">
+          {editingDoc &&
+            fields.map((field) =>
+              renderFieldInput(
+                field,
+                editFields[field.name] || "",
+                (val) =>
+                  setEditFields((prev) => ({ ...prev, [field.name]: val })),
+                field === fields[0]
+              )
+            )}
+          <Group justify="flex-end" mt="md">
+            <Button variant="light" onClick={() => setModalOpened(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => void saveEdit()}>Save Changes</Button>
           </Group>
         </Stack>
       </Modal>
 
-      <Modal 
-        opened={addModalOpened} 
-        onClose={() => {
-          setAddModalOpened(false);
-          setNewFieldErrors({});
-        }}
-        title="Add New Document" 
-        centered
+      {/* Add Document Modal */}
+      <Modal
+        opened={addModalOpened}
+        onClose={() => setAddModalOpened(false)}
+        title="Add New Document"
         size="lg"
-        overlayProps={{
-          backgroundOpacity: 0.55,
-          blur: 3
-        }}
+        centered
       >
-        <Stack>
-          {fields.map((f, i) =>
+        <Stack gap="md">
+          {fields.map((field) =>
             renderFieldInput(
-              f,
-              newDocFields[f.name] ?? "",
-              (val) => setNewDocFields((prev) => ({ ...prev, [f.name]: val })),
-              i === 0,
+              field,
+              newDocFields[field.name] || "",
+              (val) =>
+                setNewDocFields((prev) => ({ ...prev, [field.name]: val })),
+              field === fields[0],
               true
             )
           )}
-          <Group justify="flex-end">
-            <Button onClick={addDocument}>Create</Button>
+          <Group justify="flex-end" mt="md">
+            <Button variant="light" onClick={() => setAddModalOpened(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => void addDocument()}>Add Document</Button>
           </Group>
         </Stack>
       </Modal>
 
+      {/* CSV Upload Modal */}
       <Modal
         opened={uploadModalOpened}
-        onClose={() => {
-          setUploadModalOpened(false);
-          setUploadFile(null);
-        }}
+        onClose={() => setUploadModalOpened(false)}
         title="Upload CSV"
+        size="lg"
         centered
       >
-        <Stack>
-          <Text size="sm" c="dimmed">
-            Upload a CSV file with the following columns: id, {fields.map(f => f.name).join(', ')}
-          </Text>
-          <FileInput
-            label="CSV File"
-            placeholder="Choose a CSV file"
-            accept=".csv"
-            value={uploadFile}
-            onChange={setUploadFile}
-          />
-          <Group justify="flex-end">
+        <Stack gap="md">
+          <Dropzone
+            onDrop={(files) => {
+              if (files[0]) {
+                setUploadFile(files[0]);
+              }
+            }}
+            maxFiles={1}
+            accept={['text/csv']}
+          >
+            <Group justify="center" gap="xl" style={{ minHeight: 220, pointerEvents: 'none' }}>
+              <Dropzone.Accept>
+                <IconUpload size={50} stroke={1.5} />
+              </Dropzone.Accept>
+              <Dropzone.Reject>
+                <IconUpload size={50} stroke={1.5} />
+              </Dropzone.Reject>
+              <Dropzone.Idle>
+                <IconUpload size={50} stroke={1.5} />
+              </Dropzone.Idle>
+
+              <div>
+                <Text size="xl" inline>
+                  Drag a CSV file here or click to select
+                </Text>
+                <Text size="sm" c="dimmed" inline mt={7}>
+                  The file should not exceed 5mb
+                </Text>
+              </div>
+            </Group>
+          </Dropzone>
+          {uploadFile && (
+            <Text size="sm" ta="center">
+              Selected file: {uploadFile.name}
+            </Text>
+          )}
+          <Group justify="flex-end" mt="md">
+            <Button variant="light" onClick={() => setUploadModalOpened(false)}>
+              Cancel
+            </Button>
             <Button
-              onClick={handleCSVUpload}
+              onClick={() => void handleCSVUpload()}
               loading={uploading}
               disabled={!uploadFile}
             >
@@ -931,31 +1474,34 @@ export default function CollectionViewer() {
       {/* Bulk Edit Modal */}
       <Modal
         opened={bulkEditModalOpened}
-        onClose={() => {
-          setBulkEditModalOpened(false);
-          setBulkEditField("");
-          setBulkEditValue("");
-        }}
-        title={`Edit ${selectedDocs.size} Documents`}
+        onClose={() => setBulkEditModalOpened(false)}
+        title="Bulk Edit"
+        size="lg"
         centered
       >
-        <Stack>
-          <NativeSelect
-            label="Field to Update"
-            data={fields.map(f => ({ value: f.name, label: f.name }))}
+        <Stack gap="md">
+          <Select
+            label="Select Field"
+            data={fields.map((f) => ({ value: f.name, label: f.name }))}
             value={bulkEditField}
-            onChange={(e) => setBulkEditField(e.currentTarget.value)}
+            onChange={(val) => setBulkEditField(val || '')}
+            clearable
           />
           {bulkEditField && (
             renderFieldInput(
-              fields.find(f => f.name === bulkEditField)!,
+              fields.find((f) => f.name === bulkEditField)!,
               bulkEditValue,
               setBulkEditValue,
               true
             )
           )}
-          <Group justify="flex-end">
-            <Button onClick={handleBulkEdit}>Update All</Button>
+          <Group justify="flex-end" mt="md">
+            <Button variant="light" onClick={() => setBulkEditModalOpened(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => void handleBulkEdit()}>
+              Apply to Selected
+            </Button>
           </Group>
         </Stack>
       </Modal>

@@ -14,6 +14,7 @@ export type FieldDef = {
   options?: string[] | undefined;
   validation?: ValidationRule | undefined;
   description?: string | undefined;
+  order?: number;
 };
 
 export type FirestoreDoc = {
@@ -21,4 +22,19 @@ export type FirestoreDoc = {
   [key: string]: string | number | boolean | null | undefined;
 };
 
-export type DocumentUpdate = Record<string, string | number | boolean>; 
+export type DocumentUpdate = Record<string, string | number | boolean>;
+
+export type ChangelogEntry = {
+  id: string;
+  timestamp: number;
+  userId: string;
+  userEmail: string;
+  action: 'create' | 'update' | 'delete';
+  collection: string;
+  documentId: string;
+  changes: {
+    before?: Record<string, any>;
+    after?: Record<string, any>;
+  };
+  metadata?: Record<string, any>;
+}; 
