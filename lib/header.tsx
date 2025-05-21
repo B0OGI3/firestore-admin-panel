@@ -19,6 +19,7 @@ import { useThemeToggle } from "@/lib/theme";
 import { auth } from "@/lib/firebaseConfig";
 import { useAppTitle } from "./hooks/useAppTitle";
 import { signOut } from "firebase/auth";
+import PermissionGate from "@/lib/PermissionGate";
 
 export default function HeaderBar(): JSX.Element {
   const router = useRouter();
@@ -70,13 +71,15 @@ export default function HeaderBar(): JSX.Element {
         </Flex>
 
         <Flex align="center" gap="xs">
-          <ActionIcon
-            variant="subtle"
-            onClick={() => router.push("/dashboard/changelog")}
-            size="sm"
-          >
-            <IconHistory size={18} />
-          </ActionIcon>
+          <PermissionGate permission="canManageRoles" fallback={null}>
+            <ActionIcon
+              variant="subtle"
+              onClick={() => router.push("/dashboard/changelog")}
+              size="sm"
+            >
+              <IconHistory size={18} />
+            </ActionIcon>
+          </PermissionGate>
           <ActionIcon
             variant="subtle"
             onClick={toggle}

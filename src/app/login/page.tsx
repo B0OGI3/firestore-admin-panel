@@ -55,10 +55,15 @@ export default function LoginPage() {
     const userDoc = await getDoc(userRef);
 
     if (!userDoc.exists()) {
+      // Get the default role from app_config/global
+      const configRef = doc(db, "app_config", "global");
+      const configDoc = await getDoc(configRef);
+      const defaultRole = configDoc.exists() ? configDoc.data().defaultRole : "viewer";
+
       await setDoc(userRef, {
         email: user.email,
         displayName: user.displayName || user.email,
-        role: "user",
+        role: defaultRole,
         createdAt: new Date().toISOString(),
       });
     }
@@ -95,7 +100,7 @@ export default function LoginPage() {
         
         // Sign out the user until they verify their email
         await auth.signOut();
-        setError("Please check your email to verify your account before signing in.");
+        setError("Please check your email (and spam/junk folder) to verify your account before signing in.");
         setIsSignUp(false);
       } else {
         // Sign in mode
@@ -104,7 +109,7 @@ export default function LoginPage() {
         // Check if email is verified
         if (!result.user.emailVerified) {
           await auth.signOut();
-          setError("Please verify your email before signing in. Check your inbox for the verification link.");
+          setError("Please verify your email before signing in. Check your inbox and spam/junk folder for the verification link.");
           return;
         }
         
@@ -113,7 +118,28 @@ export default function LoginPage() {
       }
     } catch (error: unknown) {
       const firebaseError = error as { code: string; message: string };
-      setError(firebaseError.message);
+      console.error('Firebase auth error:', firebaseError);
+      
+      // Handle specific error cases
+      switch (firebaseError.code) {
+        case 'auth/invalid-credential':
+          setError("Invalid email or password. Please check your credentials.");
+          break;
+        case 'auth/email-already-in-use':
+          setError("This email is already registered. Please sign in instead.");
+          break;
+        case 'auth/weak-password':
+          setError("Password is too weak. Please use a stronger password.");
+          break;
+        case 'auth/invalid-email':
+          setError("Invalid email address. Please check your email format.");
+          break;
+        case 'auth/operation-not-allowed':
+          setError("Email/password accounts are not enabled. Please contact support.");
+          break;
+        default:
+          setError(firebaseError.message || "An error occurred during authentication.");
+      }
     } finally {
       setLoading(false);
     }
@@ -251,7 +277,7 @@ export default function LoginPage() {
 
                 {resendSuccess && (
                   <Text c="green" size="sm" ta="center">
-                    Verification email sent! Please check your inbox.
+                    Verification email sent! Please check your inbox and spam/junk folder.
                   </Text>
                 )}
 

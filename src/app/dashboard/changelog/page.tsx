@@ -25,8 +25,10 @@ import { IconEye, IconFilter, IconX } from "@tabler/icons-react";
 import { ChangelogService } from "@/lib/services/changelog";
 import type { ChangelogEntry } from "@/types";
 import { formatDistanceToNow } from "date-fns";
+import { useRolePermissions } from "@/lib/hooks/useRolePermissions";
 
 export default function ChangelogPage() {
+  const { permissions, loading: permissionsLoading } = useRolePermissions();
   const [entries, setEntries] = useState<ChangelogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedEntry, setSelectedEntry] = useState<ChangelogEntry | null>(null);
@@ -144,6 +146,25 @@ export default function ChangelogPage() {
       const dateB = new Date(b.timestamp).getTime();
       return sortOrder === 'asc' ? dateA - dateB : dateB - dateA;
     });
+
+  if (permissionsLoading) {
+    return (
+      <Center h="100vh">
+        <Loader size="sm" />
+      </Center>
+    );
+  }
+
+  if (!permissions?.role || permissions.role !== 'admin') {
+    return (
+      <Center h="100vh">
+        <Stack align="center">
+          <Title order={2}>Access Denied</Title>
+          <Text>Only administrators can access the changelog.</Text>
+        </Stack>
+      </Center>
+    );
+  }
 
   return (
     <Container size="xl" py="xl">

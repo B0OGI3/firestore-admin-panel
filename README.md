@@ -29,7 +29,7 @@ A modern, feature-rich admin panel for Firestore databases built with Next.js, M
 - Tracks all document operations (create, update, delete)
 - Records who made the changes and when
 - Stores before and after states for each change
-- Easy access through the changelog page
+- Easy access through the changelog page (admin only)
 - Detailed change history view
 
 ### Role-Based Access Control
@@ -38,6 +38,7 @@ A modern, feature-rich admin panel for Firestore databases built with Next.js, M
 - Custom role creation and management
 - Permission inheritance
 - User role assignment
+- Admin-only access to sensitive features
 
 ### Security
 - Firebase Authentication integration
@@ -45,6 +46,8 @@ A modern, feature-rich admin panel for Firestore databases built with Next.js, M
 - Role-based access control
 - Field-level security
 - Audit logging
+- Email verification required for new accounts
+- Password reset functionality
 
 ### User Interface
 - Modern, responsive design with Mantine UI
@@ -52,6 +55,7 @@ A modern, feature-rich admin panel for Firestore databases built with Next.js, M
 - Intuitive navigation
 - Mobile-friendly layout
 - Loading states and error handling
+- Clear user feedback for all actions
 
 ## Getting Started
 
@@ -423,3 +427,12 @@ For support, please:
    - Expected behavior
    - Actual behavior
    - Environment details
+
+### Authentication and User Management
+- Email/password authentication
+- Google authentication
+- Email verification required for new accounts
+- Password reset functionality
+- Role-based access control
+- User session management
+- Clear instructions for email verification (including spam/junk folder checks)

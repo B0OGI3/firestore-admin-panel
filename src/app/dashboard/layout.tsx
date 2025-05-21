@@ -58,13 +58,15 @@ export default function DashboardLayout({
             leftSection={<IconChartBar size="1.2rem" />}
             active={pathname === "/dashboard/analytics"}
           />
-          <NavLink
-            component={Link}
-            href="/dashboard/changelog"
-            label="Changelog"
-            leftSection={<IconHistory size="1.2rem" />}
-            active={pathname === "/dashboard/changelog"}
-          />
+          <PermissionGate permission="canManageRoles" fallback={null}>
+            <NavLink
+              component={Link}
+              href="/dashboard/changelog"
+              label="Changelog"
+              leftSection={<IconHistory size="1.2rem" />}
+              active={pathname === "/dashboard/changelog"}
+            />
+          </PermissionGate>
           <NavLink
             component={Link}
             href="/dashboard/settings/security"
