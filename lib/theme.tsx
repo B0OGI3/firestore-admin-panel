@@ -2,7 +2,6 @@
 
 import {
   MantineProvider,
-  ColorSchemeScript,
   createTheme,
 } from "@mantine/core";
 import { useState, useEffect, createContext, useContext } from "react";
@@ -20,7 +19,7 @@ export default function ThemeProvider({
   children,
 }: {
   children: React.ReactNode;
-}): JSX.Element | null {
+}): JSX.Element {
   const [mode, setMode] = useState<ColorScheme>("light");
   const [mounted, setMounted] = useState(false);
 
@@ -49,20 +48,15 @@ export default function ThemeProvider({
     defaultRadius: "md",
   });
 
-  if (!mounted) return null;
-
   return (
-    <>
-      <ColorSchemeScript />
-      <MantineProvider 
-        theme={theme}
-        forceColorScheme={mode}
-      >
-        <ThemeContext.Provider value={{ colorScheme: mode, toggle }}>
-          {children}
-        </ThemeContext.Provider>
-      </MantineProvider>
-    </>
+    <MantineProvider 
+      theme={theme}
+      forceColorScheme={mounted ? mode : "light"}
+    >
+      <ThemeContext.Provider value={{ colorScheme: mode, toggle }}>
+        {children}
+      </ThemeContext.Provider>
+    </MantineProvider>
   );
 }
 

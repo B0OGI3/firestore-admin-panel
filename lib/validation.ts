@@ -26,8 +26,13 @@ export function validateField(
   if (validation.required && (value === null || value === undefined || value === "")) {
     return {
       field: fieldName,
-      message: "This field is required"
+      message: `${fieldName} is required`
     };
+  }
+
+  // Skip further validation if value is empty and not required
+  if (value === null || value === undefined || value === "") {
+    return null;
   }
 
   // Type-specific validations
@@ -36,7 +41,7 @@ export function validateField(
     if (validation.min !== null && validation.min !== undefined && value < validation.min) {
       return {
         field: fieldName,
-        message: `Value must be at least ${validation.min}`
+        message: `${fieldName} must be at least ${validation.min}`
       };
     }
 
@@ -44,7 +49,7 @@ export function validateField(
     if (validation.max !== null && validation.max !== undefined && value > validation.max) {
       return {
         field: fieldName,
-        message: `Value must be at most ${validation.max}`
+        message: `${fieldName} must be at most ${validation.max}`
       };
     }
   }
@@ -56,7 +61,7 @@ export function validateField(
       if (!regex.test(value)) {
         return {
           field: fieldName,
-          message: validation.patternError || `Invalid format`
+          message: validation.patternError || `${fieldName} has an invalid format`
         };
       }
     } catch (err) {
@@ -74,7 +79,7 @@ export function validateField(
     if (!emailRegex.test(value)) {
       return {
         field: fieldName,
-        message: "Invalid email address"
+        message: "Please enter a valid email address"
       };
     }
   }
@@ -86,7 +91,23 @@ export function validateField(
     } catch {
       return {
         field: fieldName,
-        message: "Invalid URL"
+        message: "Please enter a valid URL"
+      };
+    }
+  }
+
+  // String length validation
+  if (typeof value === 'string') {
+    if (validation.min !== null && validation.min !== undefined && value.length < validation.min) {
+      return {
+        field: fieldName,
+        message: `${fieldName} must be at least ${validation.min} characters`
+      };
+    }
+    if (validation.max !== null && validation.max !== undefined && value.length > validation.max) {
+      return {
+        field: fieldName,
+        message: `${fieldName} must be at most ${validation.max} characters`
       };
     }
   }

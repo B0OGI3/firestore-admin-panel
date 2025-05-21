@@ -2,7 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Loader, Center } from "@mantine/core";
+import { LoadingScreen } from "./components/LoadingScreen";
 
 export default function RouteLoader({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -30,11 +30,7 @@ export default function RouteLoader({ children }: { children: React.ReactNode })
   }, [pathname]);
 
   if (loading) {
-    return (
-      <Center style={{ height: "100vh" }}>
-        <Loader size="lg" color="blue" />
-      </Center>
-    );
+    return <LoadingScreen message="Loading page..." />;
   }
 
   return <>{children}</>;

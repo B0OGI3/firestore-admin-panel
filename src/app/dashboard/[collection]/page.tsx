@@ -183,35 +183,55 @@ export default function CollectionViewer() {
       label: f.name,
       error: error,
       description: f.description,
-      autoFocus: autoFocus
-    };
-
-    const handleInputChange = (val: string | null | React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-      const stringVal = typeof val === 'string' ? val : 
-                       val === null ? '' :
-                       val.currentTarget?.value || '';
-      onChange(stringVal);
-      validateAndUpdateField(f, stringVal, isNewDoc);
-    };
-
-    const handleNumberChange = (val: number | string) => {
-      const stringVal = String(val ?? '');
-      onChange(stringVal);
-      validateAndUpdateField(f, stringVal, isNewDoc);
+      autoFocus: autoFocus,
+      required: f.validation?.required ?? false,
+      withAsterisk: f.validation?.required ?? false,
+      onChange: (val: string | null | React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+        const stringVal = typeof val === 'string' ? val : 
+                         val === null ? '' :
+                         val.currentTarget?.value || '';
+        onChange(stringVal);
+        validateAndUpdateField(f, stringVal, isNewDoc);
+      }
     };
 
     switch (f.type) {
-      case "number":
-        return (
-          <NumberInput
-            key={f.name}
-            {...commonProps}
-            value={value ? Number(value) : 0}
-            onChange={handleNumberChange}
-            allowNegative
-            allowDecimal
-          />
-        );
+      case "number": {
+        const numberProps: {
+          value: number;
+          onChange: (val: number | string) => void;
+          allowNegative: boolean;
+          allowDecimal: boolean;
+          label: string;
+          error: string | undefined;
+          description: string | undefined;
+          autoFocus: boolean;
+          required: boolean;
+          withAsterisk: boolean;
+          min?: number;
+          max?: number;
+        } = {
+          ...commonProps,
+          value: value ? Number(value) : 0,
+          onChange: (val: number | string) => {
+            const stringVal = String(val ?? '');
+            onChange(stringVal);
+            validateAndUpdateField(f, stringVal, isNewDoc);
+          },
+          allowNegative: true,
+          allowDecimal: true
+        };
+
+        // Only add min/max if they are valid numbers
+        if (typeof f.validation?.min === 'number') {
+          numberProps.min = f.validation.min;
+        }
+        if (typeof f.validation?.max === 'number') {
+          numberProps.max = f.validation.max;
+        }
+
+        return <NumberInput key={f.name} {...numberProps} />;
+      }
 
       case "boolean":
         return (
@@ -219,12 +239,11 @@ export default function CollectionViewer() {
             key={f.name}
             {...commonProps}
             value={value || ""}
-            onChange={handleInputChange}
             data={[
               { value: "true", label: "True" },
               { value: "false", label: "False" }
             ]}
-            clearable
+            clearable={!f.validation?.required}
           />
         );
 
@@ -235,9 +254,8 @@ export default function CollectionViewer() {
             key={f.name}
             {...commonProps}
             value={value || ""}
-            onChange={handleInputChange}
             data={options.map(opt => ({ value: opt, label: opt }))}
-            clearable
+            clearable={!f.validation?.required}
           />
         );
       }
@@ -248,7 +266,6 @@ export default function CollectionViewer() {
             key={f.name}
             {...commonProps}
             value={value}
-            onChange={handleInputChange}
             type="date"
           />
         );
@@ -259,7 +276,6 @@ export default function CollectionViewer() {
             key={f.name}
             {...commonProps}
             value={value}
-            onChange={handleInputChange}
             type="email"
           />
         );
@@ -270,7 +286,6 @@ export default function CollectionViewer() {
             key={f.name}
             {...commonProps}
             value={value}
-            onChange={handleInputChange}
             type="url"
           />
         );
@@ -281,7 +296,8 @@ export default function CollectionViewer() {
             key={f.name}
             {...commonProps}
             value={value}
-            onChange={handleInputChange}
+            minLength={f.validation?.min ?? undefined}
+            maxLength={f.validation?.max ?? undefined}
           />
         );
     }
@@ -713,8 +729,14 @@ export default function CollectionViewer() {
     if (!editingDoc) return;
     try {
       const updated: DocumentUpdate = {};
+      let hasErrors = false;
+
+      // Validate all fields before saving
       fields.forEach((f) => {
         const val = editFields[f.name] ?? "";
+        const isValid = validateAndUpdateField(f, val, false);
+        if (!isValid) hasErrors = true;
+        
         updated[f.name] =
           f.type === "number"
             ? parseFloat(val) || 0
@@ -723,16 +745,12 @@ export default function CollectionViewer() {
             : val;
       });
 
-      // Validate before saving
-      const validation = validateDocument(updated, fields);
-      if (!validation.isValid) {
-        validation.errors.forEach((error) => {
-          showNotification({
-            title: `Error in ${error.field}`,
-            message: error.message,
-            color: "red",
-            autoClose: 5000,
-          });
+      if (hasErrors) {
+        showNotification({
+          title: "Validation Error",
+          message: "Please fix the errors before saving",
+          color: "red",
+          autoClose: 5000,
         });
         return;
       }
@@ -757,28 +775,29 @@ export default function CollectionViewer() {
           collection: collectionName,
           documentId: editingDoc.id,
           changes: {
-            before: { ...editingDoc, id: editingDoc.id },
-            after: { ...updated, id: editingDoc.id }
+            before: editingDoc,
+            after: updated
           }
         });
       }
 
-      // Update local state
-      setDocs((prev) => prev.map((d) => (d.id === editingDoc.id ? { ...d, ...updated } : d)));
+      // Refresh the documents list
+      const snap = await getDocs(collection(db, collectionName));
+      setDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setModalOpened(false);
       setEditFieldErrors({});
-
-      showNotification({
-        title: "Success",
-        message: "Document updated successfully",
+      showNotification({ 
+        title: "Success", 
+        message: "Document updated successfully", 
         color: "green",
+        autoClose: 3000 
       });
     } catch (error) {
-      console.error("Error updating document:", error);
+      console.error("Failed to update document:", error);
       showNotification({
         title: "Error",
-        message: "Failed to update document",
-        color: "red",
+        message: error instanceof Error ? error.message : "Failed to update document. Please try again.",
+        color: "red"
       });
     }
   };
@@ -828,8 +847,14 @@ export default function CollectionViewer() {
   const addDocument = async () => {
     try {
       const parsed: DocumentUpdate = {};
+      let hasErrors = false;
+
+      // Validate all fields before adding
       fields.forEach((f) => {
         const val = newDocFields[f.name] ?? "";
+        const isValid = validateAndUpdateField(f, val, true);
+        if (!isValid) hasErrors = true;
+        
         parsed[f.name] =
           f.type === "number"
             ? parseFloat(val) || 0
@@ -838,16 +863,12 @@ export default function CollectionViewer() {
             : val;
       });
 
-      // Validate before adding
-      const validation = validateDocument(parsed, fields);
-      if (!validation.isValid) {
-        validation.errors.forEach((error) => {
-          showNotification({
-            title: `Error in ${error.field}`,
-            message: error.message,
-            color: "red",
-            autoClose: 5000,
-          });
+      if (hasErrors) {
+        showNotification({
+          title: "Validation Error",
+          message: "Please fix the errors before adding the document",
+          color: "red",
+          autoClose: 5000,
         });
         return;
       }
@@ -891,12 +912,12 @@ export default function CollectionViewer() {
         color: "green",
         autoClose: 3000 
       });
-    } catch {
-      showNotification({ 
-        title: "Error", 
-        message: "Failed to add document", 
-        color: "red",
-        autoClose: 5000 
+    } catch (error) {
+      console.error("Failed to add document:", error);
+      showNotification({
+        title: "Error",
+        message: error instanceof Error ? error.message : "Failed to add document. Please try again.",
+        color: "red"
       });
     }
   };
