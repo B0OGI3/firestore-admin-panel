@@ -53,7 +53,12 @@ A modern, feature-rich admin panel for Firestore databases built with Next.js, M
 - Modern, responsive design with Mantine UI
 - Dark/light theme support
 - Intuitive navigation
-- Mobile-friendly layout
+- Mobile-friendly layout with:
+  - Responsive header with burger menu
+  - Collapsible sidebar
+  - Optimized collection cards
+  - Touch-friendly controls
+  - Proper spacing and sizing for mobile devices
 - Loading states and error handling
 - Clear user feedback for all actions
 
@@ -389,6 +394,8 @@ This will show detailed error messages and logging.
    - Override component styles
    - Add custom components
    - Modify layout in `src/app/layout.tsx`
+   - Adjust mobile breakpoints in `useMediaQuery` hooks
+   - Customize responsive behavior in layout components
 
 2. **How do I add custom fields?**
    - Define field type in collection config

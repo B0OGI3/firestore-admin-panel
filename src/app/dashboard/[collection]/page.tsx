@@ -17,7 +17,6 @@
 
 import {
   ActionIcon,
-  Badge,
   Button,
   Card,
   Container,
@@ -36,7 +35,6 @@ import {
   Select,
   SimpleGrid,
   Box,
-  UnstyledButton,
   Loader,
 } from "@mantine/core";
 import { Dropzone } from '@mantine/dropzone';
@@ -86,10 +84,12 @@ import { ChangelogService } from "@/lib/services/changelog";
 const centerCellStyle: CSSProperties = {
   textAlign: "center",
   minWidth: 120,
+  maxWidth: 200,
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
-  padding: "0.5rem"
+  padding: "0.5rem",
+  fontSize: "0.875rem"
 };
 
 /**
@@ -131,19 +131,17 @@ export default function CollectionViewer() {
   const [bulkEditField, setBulkEditField] = useState<string>("");
   const [bulkEditValue, setBulkEditValue] = useState<string>("");
   const [currentPage, setCurrentPage] = useState(1);
-  const [loading, setLoading] = useState(false);
   const ITEMS_PER_PAGE = 20;
   const [showAdvancedSearch, setShowAdvancedSearch] = useState(false);
   const [advancedFilters, setAdvancedFilters] = useState<Record<string, FilterValue>>({});
-  const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const [numberOperators, setNumberOperators] = useState<Record<string, string>>({});
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>(null);
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const [debouncedFilters] = useDebouncedValue(advancedFilters, 300);
-  const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [cachedDocs, setCachedDocs] = useState<FirestoreDoc[]>([]);
   const [cachedFilteredDocs, setCachedFilteredDocs] = useState<FirestoreDoc[]>([]);
+  const [loading, setLoading] = useState(false);
 
   const validateAndUpdateField = (
     fieldDef: FieldDef,
@@ -317,12 +315,6 @@ export default function CollectionViewer() {
                 onChange={(val: string | null) => {
                   if (val) {
                     setNumberOperators(prev => ({ ...prev, [field.name]: val }));
-                    setActiveFilters(prev => {
-                      const next = new Set(prev);
-                      if (advancedFilters[field.name] !== '') next.add(field.name);
-                      else next.delete(field.name);
-                      return next;
-                    });
                   }
                 }}
                 data={[
@@ -340,12 +332,6 @@ export default function CollectionViewer() {
                 onChange={(val: string | number) => {
                   const numVal = typeof val === 'string' ? parseFloat(val) || 0 : val;
                   setAdvancedFilters(prev => ({ ...prev, [field.name]: numVal }));
-                  setActiveFilters(prev => {
-                    const next = new Set(prev);
-                    if (numVal !== 0) next.add(field.name);
-                    else next.delete(field.name);
-                    return next;
-                  });
                 }}
                 placeholder={`Filter ${field.name}`}
                 size="sm"
@@ -358,11 +344,6 @@ export default function CollectionViewer() {
                       onClick={() => {
                         setAdvancedFilters(prev => ({ ...prev, [field.name]: '' }));
                         setNumberOperators(prev => ({ ...prev, [field.name]: '=' }));
-                        setActiveFilters(prev => {
-                          const next = new Set(prev);
-                          next.delete(field.name);
-                          return next;
-                        });
                       }}
                     >
                       <IconX size={14} />
@@ -383,12 +364,6 @@ export default function CollectionViewer() {
               if (val !== null) {
                 const boolVal = val === 'true';
                 setAdvancedFilters(prev => ({ ...prev, [field.name]: boolVal }));
-                setActiveFilters(prev => {
-                  const next = new Set(prev);
-                  if (val !== '') next.add(field.name);
-                  else next.delete(field.name);
-                  return next;
-                });
               }
             }}
             placeholder={`Filter ${field.name}`}
@@ -405,11 +380,6 @@ export default function CollectionViewer() {
                   variant="transparent"
                   onClick={() => {
                     setAdvancedFilters(prev => ({ ...prev, [field.name]: '' }));
-                    setActiveFilters(prev => {
-                      const next = new Set(prev);
-                      next.delete(field.name);
-                      return next;
-                    });
                   }}
                 >
                   <IconX size={14} />
@@ -427,12 +397,6 @@ export default function CollectionViewer() {
             onChange={(val: string | null) => {
               if (val !== null) {
                 setAdvancedFilters(prev => ({ ...prev, [field.name]: val }));
-                setActiveFilters(prev => {
-                  const next = new Set(prev);
-                  if (val !== '') next.add(field.name);
-                  else next.delete(field.name);
-                  return next;
-                });
               }
             }}
             placeholder={`Filter ${field.name}`}
@@ -446,11 +410,6 @@ export default function CollectionViewer() {
                   variant="transparent"
                   onClick={() => {
                     setAdvancedFilters(prev => ({ ...prev, [field.name]: '' }));
-                    setActiveFilters(prev => {
-                      const next = new Set(prev);
-                      next.delete(field.name);
-                      return next;
-                    });
                   }}
                 >
                   <IconX size={14} />
@@ -467,12 +426,6 @@ export default function CollectionViewer() {
             value={typeof value === 'string' ? value : ''}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
               setAdvancedFilters(prev => ({ ...prev, [field.name]: e.currentTarget.value }));
-              setActiveFilters(prev => {
-                const next = new Set(prev);
-                if (e.currentTarget.value !== '') next.add(field.name);
-                else next.delete(field.name);
-                return next;
-              });
             }}
             placeholder={`Filter ${field.name}`}
             size="sm"
@@ -483,11 +436,6 @@ export default function CollectionViewer() {
                   variant="transparent"
                   onClick={() => {
                     setAdvancedFilters(prev => ({ ...prev, [field.name]: '' }));
-                    setActiveFilters(prev => {
-                      const next = new Set(prev);
-                      next.delete(field.name);
-                      return next;
-                    });
                   }}
                 >
                   <IconX size={14} />
@@ -596,11 +544,6 @@ export default function CollectionViewer() {
     return processedDocs.slice(startIndex, endIndex);
   }, [processedDocs, currentPage]);
 
-  // Memoize the total pages
-  const totalPages = useMemo(() => {
-    return Math.ceil(processedDocs.length / ITEMS_PER_PAGE);
-  }, [processedDocs]);
-
   // Fetch all documents with caching
   const fetchAllDocs = useCallback(async () => {
     if (!collectionName) return;
@@ -609,7 +552,6 @@ export default function CollectionViewer() {
       const allDocsSnap = await getDocs(collection(db, collectionName));
       const allDocs = allDocsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setCachedDocs(allDocs);
-      setIsInitialLoad(false);
     } catch (error) {
       showNotification({ 
         title: "Error", 
@@ -1053,35 +995,6 @@ export default function CollectionViewer() {
     }
   };
 
-  const handleBulkDelete = async () => {
-    if (!permissions?.canDelete) return;
-    if (selectedDocs.size === 0) return;
-    if (!confirm(`Delete ${selectedDocs.size} selected documents?`)) return;
-
-    try {
-      const batch = writeBatch(db);
-      selectedDocs.forEach(id => {
-        const docRef = doc(db, collectionName, id);
-        batch.delete(docRef);
-      });
-
-      await batch.commit();
-      setDocs(prev => prev.filter(d => !selectedDocs.has(d.id)));
-      setSelectedDocs(new Set());
-      showNotification({
-        title: "Success",
-        message: `Deleted ${selectedDocs.size} documents`,
-        color: "green",
-      });
-    } catch {
-      showNotification({
-        title: "Error",
-        message: "Failed to delete documents",
-        color: "red",
-      });
-    }
-  };
-
   const handleBulkEdit = async () => {
     if (!permissions?.canEdit) return;
     if (selectedDocs.size === 0) return;
@@ -1178,204 +1091,162 @@ export default function CollectionViewer() {
   }
 
   return (
-    <Container size="xl" py="md">
-      <Card withBorder radius="lg" shadow="sm" mb="md">
-        <Stack gap="md">
-          <Group justify="space-between" align="center">
-            <Title order={2} size="h3" fw={600}>
-              {collectionName}
-            </Title>
-            <Group>
-              {permissions?.canEdit && (
-                <>
-                  <Button
-                    variant="light"
-                    leftSection={<IconPlus size={16} />}
-                    onClick={() => setAddModalOpened(true)}
-                    size="sm"
-                  >
-                    Add Document
-                  </Button>
-                  <Button
-                    variant="light"
-                    leftSection={<IconUpload size={16} />}
-                    onClick={() => setUploadModalOpened(true)}
-                    size="sm"
-                  >
-                    Import CSV
-                  </Button>
-                  <Button
-                    variant="light"
-                    leftSection={<IconDownload size={16} />}
-                    onClick={downloadCSV}
-                    size="sm"
-                  >
-                    Export CSV
-                  </Button>
-                  {selectedDocs.size > 0 && (
-                    <Button
-                      variant="light"
-                      color="red"
-                      leftSection={<IconTrash size={16} />}
-                      onClick={() => void handleBulkDelete()}
-                      size="sm"
-                    >
-                      Delete Selected
-                    </Button>
-                  )}
-                </>
-              )}
-            </Group>
-          </Group>
-
-          <Group>
-            <TextInput
-              placeholder="Search documents..."
-              value={search}
-              onChange={(e) => setSearch(e.currentTarget.value)}
-              size="sm"
-              style={{ flex: 1 }}
-              rightSection={loading && <Loader size="xs" />}
-            />
+    <Container size="xl" px="xs">
+      <Stack gap="md">
+        <Group justify="space-between" align="center" wrap="nowrap">
+          <Title order={2}>{collectionName}</Title>
+          <Group gap="xs" wrap="nowrap">
+            {permissions?.canEdit && (
+              <Button
+                leftSection={<IconPlus size="1rem" />}
+                onClick={() => setAddModalOpened(true)}
+                size="sm"
+              >
+                Add
+              </Button>
+            )}
+            {permissions?.canEdit && (
+              <Button
+                leftSection={<IconUpload size="1rem" />}
+                onClick={() => setUploadModalOpened(true)}
+                size="sm"
+              >
+                Import
+              </Button>
+            )}
             <Button
-              variant="light"
-              leftSection={<IconFilter size={16} />}
-              onClick={() => setShowAdvancedSearch(!showAdvancedSearch)}
+              leftSection={<IconDownload size="1rem" />}
+              onClick={downloadCSV}
               size="sm"
             >
-              Advanced Search
+              Export
             </Button>
           </Group>
+        </Group>
 
-          <Collapse in={showAdvancedSearch}>
-            <Card withBorder mt="md">
-              <Stack>
-                <Group justify="space-between">
-                  <Text fw={500}>Advanced Filters</Text>
-                  {activeFilters.size > 0 && (
-                    <Button
-                      variant="subtle"
-                      color="red"
-                      size="xs"
-                      onClick={() => {
-                        setAdvancedFilters({});
-                        setActiveFilters(new Set());
-                      }}
-                    >
-                      Clear All Filters
-                    </Button>
-                  )}
-                </Group>
-                <SimpleGrid cols={{ base: 1, sm: 2, md: 3, lg: 4 }}>
-                  {fields.map((field) => renderAdvancedFilter(field))}
-                </SimpleGrid>
-              </Stack>
-            </Card>
-          </Collapse>
-        </Stack>
-      </Card>
+        <Card withBorder>
+          <Stack gap="md">
+            <Group justify="space-between" wrap="nowrap">
+              <TextInput
+                placeholder="Search..."
+                value={search}
+                onChange={(e) => setSearch(e.currentTarget.value)}
+                style={{ flex: 1 }}
+                size="sm"
+              />
+              <Button
+                variant="light"
+                leftSection={<IconFilter size="1rem" />}
+                onClick={() => setShowAdvancedSearch(!showAdvancedSearch)}
+                size="sm"
+              >
+                Filters
+              </Button>
+            </Group>
 
-      <Card withBorder radius="lg" shadow="sm">
-        {isInitialLoad ? (
-          <Center p="xl">
-            <Loader size="lg" />
-          </Center>
-        ) : (
-          <>
-            <Table striped highlightOnHover withTableBorder withColumnBorders>
-              <Table.Thead>
-                <Table.Tr>
-                  {permissions?.canEdit && (
-                    <Table.Th style={{ width: 40 }}>
-                      <Checkbox
-                        checked={selectedDocs.size === docs.length}
-                        onChange={toggleSelectAll}
-                        size="sm"
-                      />
-                    </Table.Th>
-                  )}
-                  {fields.map((field) => (
-                    <Table.Th key={field.name} style={centerCellStyle}>
-                      <UnstyledButton
-                        onClick={() => handleSort(field.name)}
-                        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
-                      >
-                        {field.name}
-                        {getSortIcon(field.name)}
-                      </UnstyledButton>
-                    </Table.Th>
-                  ))}
-                  {permissions?.canEdit && (
-                    <Table.Th style={{ width: 100 }}>Actions</Table.Th>
-                  )}
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {docs.map((doc) => (
-                  <Table.Tr key={doc.id}>
-                    {permissions?.canEdit && (
-                      <Table.Td>
-                        <Checkbox
-                          checked={selectedDocs.has(doc.id)}
-                          onChange={() => toggleSelectDoc(doc.id)}
-                          size="sm"
-                        />
-                      </Table.Td>
-                    )}
-                    {fields.map((field) => (
-                      <Table.Td key={field.name} style={centerCellStyle}>
-                        {field.type === "boolean" ? (
-                          <Badge
-                            color={doc[field.name] ? "green" : "red"}
-                            variant="light"
-                          >
-                            {String(doc[field.name])}
-                          </Badge>
-                        ) : (
-                          displayValue(doc[field.name])
+            <Collapse in={showAdvancedSearch}>
+              <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="md">
+                {fields.map((field) => renderAdvancedFilter(field))}
+              </SimpleGrid>
+            </Collapse>
+
+            <Box style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+              {loading ? (
+                <Center py="xl">
+                  <Loader size="sm" />
+                </Center>
+              ) : (
+                <Table striped highlightOnHover>
+                  <thead>
+                    <tr>
+                      {permissions?.canDelete && (
+                        <th style={{ width: 40, padding: '0.5rem' }}>
+                          <Checkbox
+                            checked={selectedDocs.size === docs.length}
+                            onChange={toggleSelectAll}
+                            size="sm"
+                          />
+                        </th>
+                      )}
+                      {fields.map((field) => (
+                        <th
+                          key={field.name}
+                          style={{
+                            ...centerCellStyle,
+                            cursor: 'pointer',
+                            userSelect: 'none'
+                          }}
+                          onClick={() => handleSort(field.name)}
+                        >
+                          <Group gap={4} justify="center" wrap="nowrap">
+                            {field.name}
+                            {getSortIcon(field.name)}
+                          </Group>
+                        </th>
+                      ))}
+                      <th style={{ width: 100, padding: '0.5rem' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {docs.map((doc) => (
+                      <tr key={doc.id}>
+                        {permissions?.canDelete && (
+                          <td style={{ padding: '0.5rem' }}>
+                            <Checkbox
+                              checked={selectedDocs.has(doc.id)}
+                              onChange={() => toggleSelectDoc(doc.id)}
+                              size="sm"
+                            />
+                          </td>
                         )}
-                      </Table.Td>
+                        {fields.map((field) => (
+                          <td key={field.name} style={centerCellStyle}>
+                            {displayValue(doc[field.name])}
+                          </td>
+                        ))}
+                        <td style={{ padding: '0.5rem' }}>
+                          <Group gap={4} justify="center" wrap="nowrap">
+                            {permissions?.canEdit && (
+                              <ActionIcon
+                                color="blue"
+                                onClick={() => handleEdit(doc)}
+                                size="sm"
+                              >
+                                <IconEdit size="1rem" />
+                              </ActionIcon>
+                            )}
+                            {permissions?.canDelete && (
+                              <ActionIcon
+                                color="red"
+                                onClick={() => handleDelete(doc.id)}
+                                size="sm"
+                              >
+                                <IconTrash size="1rem" />
+                              </ActionIcon>
+                            )}
+                          </Group>
+                        </td>
+                      </tr>
                     ))}
-                    {permissions?.canEdit && (
-                      <Table.Td>
-                        <Group gap={4} justify="center">
-                          <ActionIcon
-                            variant="light"
-                            color="blue"
-                            onClick={() => handleEdit(doc)}
-                            size="sm"
-                          >
-                            <IconEdit size={16} />
-                          </ActionIcon>
-                          <ActionIcon
-                            variant="light"
-                            color="red"
-                            onClick={() => handleDelete(doc.id)}
-                            size="sm"
-                          >
-                            <IconTrash size={16} />
-                          </ActionIcon>
-                        </Group>
-                      </Table.Td>
-                    )}
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-            
-            <Group justify="center" mt="xl">
+                  </tbody>
+                </Table>
+              )}
+            </Box>
+
+            <Group justify="space-between" wrap="nowrap">
+              <Text size="sm" color="dimmed">
+                Showing {docs.length} items
+              </Text>
               <Pagination
-                total={totalPages}
+                total={Math.ceil(cachedDocs.length / ITEMS_PER_PAGE)}
                 value={currentPage}
                 onChange={handlePageChange}
                 size="sm"
-                radius="md"
-                withEdges
               />
             </Group>
-          </>
-        )}
-      </Card>
+          </Stack>
+        </Card>
+      </Stack>
 
       {/* Edit Modal */}
       <Modal

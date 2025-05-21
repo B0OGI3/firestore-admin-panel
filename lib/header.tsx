@@ -7,7 +7,9 @@ import {
   Text,
   useMantineTheme,
   Button,
+  Burger,
 } from "@mantine/core";
+import { useMediaQuery } from '@mantine/hooks';
 import {
   IconHome,
   IconMoon,
@@ -21,11 +23,17 @@ import { useAppTitle } from "./hooks/useAppTitle";
 import { signOut } from "firebase/auth";
 import PermissionGate from "@/lib/PermissionGate";
 
-export default function HeaderBar(): JSX.Element {
+interface HeaderBarProps {
+  burgerOpened?: boolean;
+  onBurgerClick?: () => void;
+}
+
+export default function HeaderBar({ burgerOpened = false, onBurgerClick = () => {} }: HeaderBarProps): JSX.Element {
   const router = useRouter();
   const theme = useMantineTheme();
   const { colorScheme, toggle } = useThemeToggle();
   const { title } = useAppTitle();
+  const isMobile = useMediaQuery('(max-width: 768px)');
 
   const handleLogout = async (): Promise<void> => {
     try {
@@ -55,16 +63,25 @@ export default function HeaderBar(): JSX.Element {
           borderBottom: `1px solid ${
             colorScheme === "dark" ? theme.colors.dark[4] : theme.colors.gray[3]
           }`,
+          height: 60,
         }}
       >
         <Flex align="center" gap="md">
-          <ActionIcon
-            variant="subtle"
-            onClick={() => router.push("/dashboard")}
-            size="sm"
-          >
-            <IconHome size={18} />
-          </ActionIcon>
+          {isMobile ? (
+            <Burger
+              opened={burgerOpened}
+              onClick={onBurgerClick}
+              size="sm"
+            />
+          ) : (
+            <ActionIcon
+              variant="subtle"
+              onClick={() => router.push("/dashboard")}
+              size="sm"
+            >
+              <IconHome size={18} />
+            </ActionIcon>
+          )}
           <Text size="lg" fw={500}>
             {title}
           </Text>

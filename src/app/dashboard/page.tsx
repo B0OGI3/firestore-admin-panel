@@ -157,7 +157,7 @@ export default function DashboardPage() {
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={collections} strategy={verticalListSortingStrategy}>
             <SimpleGrid
-              cols={{ base: 1, sm: 2, md: 3, lg: 4 }}
+              cols={{ base: 1, sm: 1, md: 2, lg: 3 }}
               spacing="xl"
               verticalSpacing="xl"
             >
@@ -177,13 +177,13 @@ export default function DashboardPage() {
                     }}
                     tabIndex={0}
                   >
-                    <Group align="center" gap="md">
+                    <Group align="center" gap="xl" p="md">
                       <Avatar color="blue" radius="md" size={48}>
-                        {col === "users" ? <IconFolder size={28} /> : <IconDatabase size={28} />}
+                        {col === "users" ? <IconFolder size={32} /> : <IconDatabase size={32} />}
                       </Avatar>
-                      <Stack gap={0}>
-                        <Title order={3} size="h4" style={{ fontWeight: 700 }}>{col.charAt(0).toUpperCase() + col.slice(1)}</Title>
-                        <Text size="sm" c="dimmed">
+                      <Stack gap={4}>
+                        <Title order={3} size="h3" style={{ fontWeight: 700 }}>{col.charAt(0).toUpperCase() + col.slice(1)}</Title>
+                        <Text size="md" c="dimmed">
                           {col === "users" ? "User accounts" : "Collection"}
                         </Text>
                       </Stack>
